@@ -1,0 +1,17 @@
+services:
+  caranguejada:
+    build: .
+    image: caranguejada:local
+    ports:
+      - '3000:3000'
+    environment:
+      LOG_LEVEL: info
+      MAX_ROOMS: '500'
+      # Em produção, restrinja: ALLOWED_ORIGINS: https://seu-dominio.com
+      ALLOWED_ORIGINS: ''
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
+    restart: unless-stopped

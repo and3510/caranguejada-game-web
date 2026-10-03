@@ -1,0 +1,19 @@
+{
+  "name": "@caranguejada/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/index.ts",
+    "build": "esbuild src/index.ts --bundle --platform=node --target=node22 --format=cjs --sourcemap --external:bufferutil --external:utf-8-validate --outfile=dist/server.cjs"
+  },
+  "dependencies": {
+    "@caranguejada/shared": "*",
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.2",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15"
+  }
+}

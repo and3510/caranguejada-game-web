@@ -1,0 +1,38 @@
+{
+  "name": "caranguejada",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Jogo multiplayer de navegador: caranguejos, maré subindo e empurrões.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "packages/shared",
+    "packages/server",
+    "packages/client"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,client -c yellow,cyan \"npm run dev -w @caranguejada/server\" \"npm run dev -w @caranguejada/client\"",
+    "build": "npm run build -w @caranguejada/client && npm run build -w @caranguejada/server",
+    "start": "STATIC_DIR=packages/client/dist node packages/server/dist/server.cjs",
+    "typecheck": "tsc -p packages/shared && tsc -p packages/server && tsc -p packages/client",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run lint && npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.0",
+    "@types/node": "^22.20.5",
+    "concurrently": "^10.0.5",
+    "eslint": "^10.12.0",
+    "prettier": "^3.9.9",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.71.0",
+    "vitest": "^5.0.3"
+  }
+}

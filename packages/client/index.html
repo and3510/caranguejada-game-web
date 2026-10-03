@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+    />
+    <meta
+      name="description"
+      content="Caranguejada: empurre, cave e sobreviva à maré. Jogue sozinho ou com amigos no navegador."
+    />
+    <meta name="theme-color" content="#1f4e6b" />
+    <title>Caranguejada</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&family=Silkscreen&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <div id="game"></div>
+
+    <!-- Menu inicial -->
+    <section id="menu" class="screen">
+      <div class="board menu-board">
+        <canvas id="title-crab" width="16" height="16" aria-hidden="true"></canvas>
+        <h1>Caranguejada</h1>
+        <p class="tagline">a água tá subindo. empurra quem tiver na beirada.</p>
+
+        <label class="field">
+          <span>Seu nome</span>
+          <input id="name" maxlength="14" autocomplete="nickname" spellcheck="false" />
+        </label>
+
+        <div class="field rounds-field">
+          <span>Rodadas</span>
+          <div id="menu-rounds" class="rounds" role="radiogroup" aria-label="Quantidade de rodadas">
+            <button type="button" role="radio" data-rounds="1">1</button>
+            <button type="button" role="radio" data-rounds="3">3</button>
+            <button type="button" role="radio" data-rounds="5">5</button>
+            <button type="button" role="radio" data-rounds="7">7</button>
+          </div>
+        </div>
+
+        <details class="maps-field">
+          <summary>Mapas: <b id="menu-maps-summary">todos</b></summary>
+          <div id="menu-maps" class="maps"></div>
+        </details>
+
+        <div class="actions">
+          <button id="btn-solo" class="btn btn-primary">Jogar sozinho</button>
+          <button id="btn-create" class="btn">Criar sala</button>
+        </div>
+
+        <form id="join-form" class="join">
+          <input
+            id="code"
+            maxlength="4"
+            placeholder="CÓDIGO"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="Código da sala"
+          />
+          <button class="btn" type="submit">Entrar</button>
+        </form>
+
+        <p id="menu-error" class="error" role="alert"></p>
+
+        <details class="howto">
+          <summary>Como jogar</summary>
+          <ul>
+            <li><kbd>WASD</kbd> / setas: andar de lado (é caranguejo, né)</li>
+            <li>
+              <kbd>Espaço</kbd>: dash — dispara rápido para fugir da água ou de alguém, e joga longe
+              quem estiver no caminho
+            </li>
+            <li><kbd>Esc</kbd>: menu (volume e sair da partida)</li>
+            <li>
+              a água entra por um lado e termina num ponto secreto: descubra qual é antes dos outros
+            </li>
+          </ul>
+          <p>
+            A água invade a ilha das bordas para o centro, cada vez mais rápido. Na água o fôlego
+            acaba. Concha vale ponto, jogar alguém pro fundo vale mais, e o último de pé leva a
+            rodada.
+          </p>
+        </details>
+      </div>
+    </section>
+
+    <!-- Lobby / resultados -->
+    <section id="lobby" class="screen hidden">
+      <div class="board lobby-board">
+        <div id="results" class="results hidden">
+          <h2>Fim da caranguejada!</h2>
+          <ol id="ranking"></ol>
+        </div>
+        <h2 class="room-title">Sala <span id="room-code" class="code"></span></h2>
+        <button id="btn-copy" class="btn btn-small">Copiar link</button>
+        <ul id="players" class="players"></ul>
+        <div class="field rounds-field">
+          <span>Rodadas</span>
+          <div
+            id="lobby-rounds"
+            class="rounds"
+            role="radiogroup"
+            aria-label="Quantidade de rodadas"
+          >
+            <button type="button" role="radio" data-rounds="1">1</button>
+            <button type="button" role="radio" data-rounds="3">3</button>
+            <button type="button" role="radio" data-rounds="5">5</button>
+            <button type="button" role="radio" data-rounds="7">7</button>
+          </div>
+          <b id="lobby-rounds-label" class="rounds-label hidden"></b>
+        </div>
+        <details id="lobby-maps-box" class="maps-field">
+          <summary>Mapas: <b id="lobby-maps-summary">todos</b></summary>
+          <div id="lobby-maps" class="maps"></div>
+        </details>
+        <p id="lobby-maps-label" class="muted maps-label hidden"></p>
+        <div id="host-controls" class="actions">
+          <button id="btn-add-bot" class="btn btn-small">+ bot</button>
+          <button id="btn-remove-bot" class="btn btn-small">− bot</button>
+          <button id="btn-start" class="btn btn-primary">Começar!</button>
+        </div>
+        <p id="wait-host" class="muted hidden">Esperando quem criou a sala começar…</p>
+        <p id="lobby-error" class="error" role="alert"></p>
+        <button id="btn-leave" class="link">sair da sala</button>
+      </div>
+    </section>
+
+    <!-- HUD durante a partida -->
+    <section id="hud" class="hidden">
+      <div class="hud-top">
+        <div class="chip" id="hud-round"></div>
+        <div class="tide" aria-label="Quanto da ilha ainda está seco">
+          <div class="tide-bar"><div id="tide-fill"></div></div>
+          <span id="tide-label"></span>
+        </div>
+        <button id="btn-pause" class="chip btn-chip" aria-label="Abrir menu (Esc)">
+          menu <kbd>esc</kbd>
+        </button>
+      </div>
+      <ol id="scoreboard" class="scoreboard"></ol>
+      <div id="toasts" class="toasts" aria-live="polite"></div>
+      <div id="banner" class="banner hidden"></div>
+      <div class="hud-bottom">
+        <div class="dash-meter" aria-label="Recarga do dash">
+          <span>dash</span>
+          <div class="dash-bar"><div id="dash-fill"></div></div>
+        </div>
+        <div class="keys">setas/WASD: andar · espaço: dash · esc: menu</div>
+      </div>
+    </section>
+
+    <!-- Fim de rodada: quem ganhou leva uma estrela -->
+    <section id="round-summary" class="screen hidden" aria-live="polite">
+      <div class="board summary-board">
+        <h2 id="summary-title"></h2>
+        <p id="summary-sub" class="muted"></p>
+        <ol id="summary-list" class="summary-list"></ol>
+        <p id="summary-next" class="muted summary-next"></p>
+      </div>
+    </section>
+
+    <!-- Menu durante a partida: não pausa, só abre por cima -->
+    <section
+      id="pause"
+      class="screen hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="pause-title"
+    >
+      <div class="board pause-board">
+        <h2 id="pause-title">Menu</h2>
+        <p class="muted">a partida continua rolando lá atrás, hein!</p>
+
+        <label class="field volume">
+          <span>Volume <b id="volume-value"></b></span>
+          <input id="volume" type="range" min="0" max="100" step="5" />
+        </label>
+
+        <div class="actions pause-actions">
+          <button id="btn-resume" class="btn btn-primary">Voltar pro jogo</button>
+          <button id="btn-quit" class="btn">Sair da partida</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Controles de toque -->
+    <section id="touch" class="hidden">
+      <div id="stick" class="stick"><div id="stick-knob"></div></div>
+      <div class="touch-buttons">
+        <button data-action="dash" class="tbtn tbtn-big">dash</button>
+      </div>
+    </section>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
