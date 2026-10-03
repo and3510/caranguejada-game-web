@@ -116,25 +116,5 @@ npm run format       # prettier
 - Container: usuário não-root, filesystem somente leitura, `cap_drop: ALL`, sem npm/yarn na imagem.
 - CI: actions fixadas por **SHA de commit**, `npm audit` e **Trivy** bloqueando vulnerabilidades HIGH/CRITICAL na imagem.
 
-## Kubernetes
 
-```bash
-kubectl apply -k deploy/k8s     # ajuste a imagem em kustomization.yaml e o host no ingress.yaml
-```
 
-O que já vem pronto: probes de liveness e readiness, `preStop` + `terminationGracePeriodSeconds` para drenar partidas, PodDisruptionBudget, Pod Security `restricted`, scrape do Prometheus por annotation e rolling update com `maxUnavailable: 0`.
-
-**Escalando além de 1 réplica.** As salas vivem em memória, então todos os jogadores de uma sala precisam cair no mesmo pod. Por isso o **código da sala vai na URL** do WebSocket (`/ws?sala=ABCD`) e é o _cliente_ que sorteia o código ao criar. Assim, um balanceador com hash consistente por esse parâmetro manda criador e convidados para o mesmo pod. O [ingress.yaml](deploy/k8s/ingress.yaml) mostra isso com ingress-nginx (`upstream-hash-by: $arg_sala`).
-
-Limitações conhecidas e próximos passos:
-
-- O ingress-nginx foi aposentado (março de 2026). Em clusters novos, use uma implementação de Gateway API com hash consistente por query param ou path, e confira o suporte na documentação dela.
-- Ao adicionar ou remover réplicas, parte do anel de hash muda. Partidas em andamento continuam (a conexão já está aberta), mas um convidado novo de uma sala remapeada recebe "sala não existe". A solução robusta é um **diretório de salas** (por exemplo, Redis com `código → pod`) consultado antes do upgrade.
-- Um HPA por `caranguejada_humans` ou CPU faz sentido depois do diretório de salas.
-
-## Roadmap de ideias
-
-- Modo "maré relâmpago" e mapas temáticos (mangue, recife).
-- Cosméticos simples (chapéu de palha, óculos) desbloqueados por partidas jogadas.
-- Replays curtos do empurrão decisivo da rodada.
-- Protocolo binário (o JSON atual é simples e suficiente para salas de 8).
