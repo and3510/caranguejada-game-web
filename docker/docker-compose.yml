@@ -1,6 +1,8 @@
 services:
   caranguejada:
-    build: .
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
     image: caranguejada:local
     ports:
       - '3000:3000'
