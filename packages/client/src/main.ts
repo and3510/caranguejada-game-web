@@ -22,6 +22,10 @@ import { Ui, renderMapsPicker, renderRoundsPicker, toggleMap } from './ui/ui';
 const store = new Store();
 const ui = new Ui();
 const input = new InputController();
+// Primeiro toque num aparelho que parecia de teclado: aparece o controle de toque.
+input.onTouchMode = () => {
+  if (conn) ui.render(store);
+};
 const sfx = new Sfx();
 let conn: Connection | null = null;
 
@@ -79,7 +83,7 @@ function connect(mode: JoinMode, code = randomRoomCode()): void {
         store.startRound(m.round, m.seed, m.map, m.heights, m.countdown);
       })
       .on('snap', (m) => {
-        store.pushSnapshot(m.time, m.crabs, m.shells);
+        store.pushSnapshot(m.time, m.crabs, m.weapons, m.rockets);
         store.applyTiles(m.tiles);
         store.fxQueue.push(...m.fx);
         for (const fx of m.fx) ui.narrate(fx, store);
@@ -87,7 +91,7 @@ function connect(mode: JoinMode, code = randomRoomCode()): void {
       })
       .on('roundEnd', (m) => {
         // O servidor manda o placar (com a estrela nova) logo antes deste aviso.
-        ui.showRoundSummary(store, m.winner, m.byPoints);
+        ui.showRoundSummary(store, m.winner, m.next);
         if (m.winner === store.you) sfx.win();
       })
       .on('matchEnd', (m) => {
@@ -238,7 +242,7 @@ ui.volumeInput.addEventListener('input', () => {
   storage.set('caranguejada:volume', String(sfx.volume));
 });
 // Toque de teste ao soltar o slider, para ouvir o volume escolhido.
-ui.volumeInput.addEventListener('change', () => sfx.shell(false));
+ui.volumeInput.addEventListener('change', () => sfx.pickup());
 window.addEventListener('keydown', (e) => {
   if (e.code !== 'Escape') return;
   if (ui.isPauseOpen) closePause();
@@ -252,8 +256,7 @@ const scene = new GameScene({
   input,
   sfx,
   send: (msg) => conn?.send(msg),
-  onFrame: ({ roundTime, land, dashReady }) =>
-    ui.frame(store, roundTime, land, dashReady, (final) => sfx.countdown(final)),
+  onFrame: (info) => ui.frame(store, info, (final) => sfx.countdown(final)),
 });
 
 async function boot(): Promise<void> {

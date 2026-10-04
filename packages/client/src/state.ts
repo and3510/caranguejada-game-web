@@ -10,8 +10,9 @@ import {
   type MapKind,
   type Phase,
   type PlayerInfo,
-  type ShellSnapshot,
   type Terrain,
+  type RocketSnapshot,
+  type WeaponItemSnapshot,
 } from '@caranguejada/shared';
 
 export interface TimedSnapshot {
@@ -42,7 +43,10 @@ export class Store {
   mapKind: MapKind = 'morro';
 
   snapshots: TimedSnapshot[] = [];
-  shells: ShellSnapshot[] = [];
+  /** Armas caídas no chão. */
+  weapons: WeaponItemSnapshot[] = [];
+  /** Foguetes da bazuca em voo. */
+  rockets: RocketSnapshot[] = [];
   fxQueue: FxEvent[] = [];
   countdownEndsAt = 0;
 
@@ -76,18 +80,25 @@ export class Store {
     this.terrainVersion++;
     this.roundId++;
     this.snapshots = [];
-    this.shells = [];
+    this.weapons = [];
+    this.rockets = [];
     this.countdownEndsAt = performance.now() + countdown * 1000;
   }
 
-  pushSnapshot(time: number, crabs: CrabSnapshot[], shells: ShellSnapshot[]): void {
+  pushSnapshot(
+    time: number,
+    crabs: CrabSnapshot[],
+    weapons: WeaponItemSnapshot[],
+    rockets: RocketSnapshot[],
+  ): void {
     this.snapshots.push({
       at: performance.now(),
       time,
       crabs: new Map(crabs.map((c) => [c.id, c])),
     });
     if (this.snapshots.length > 30) this.snapshots.shift();
-    this.shells = shells;
+    this.weapons = weapons;
+    this.rockets = rockets;
   }
 
   applyTiles(tiles: [number, number][]): void {
@@ -103,7 +114,8 @@ export class Store {
     this.players = [];
     this.terrain = null;
     this.snapshots = [];
-    this.shells = [];
+    this.weapons = [];
+    this.rockets = [];
     this.fxQueue = [];
   }
 }

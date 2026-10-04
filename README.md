@@ -1,19 +1,46 @@
 # Caranguejada
 
 Jogo multiplayer de navegador sobre caranguejos numa ilha que está sendo engolida pelo mar.
-A água invade das bordas para o centro, cada vez mais rápido. Você usa o **dash** para fugir da água
-e para jogar os outros no mar e tenta ser o último de pé.
+A água invade das bordas para o centro, cada vez mais rápido. Você usa o **dash** para fugir da água,
+cata uma **arma** no mapa para jogar os outros no mar e tenta ser o último de pé.
 Dá pra jogar sozinho (contra bots) ou criar uma sala e mandar o link pros amigos.
 
 ## Como se joga
 
-| Tecla                    | Ação                                                            |
-| ------------------------ | --------------------------------------------------------------- |
-| `WASD` / setas           | andar                                                           |
-| `Espaço` / `Shift` / `J` | **dash**: dispara rápido; quem estiver no caminho é arremessado |
-| `Esc`                    | menu: volume e sair da partida (o jogo **não** pausa)           |
+| Tecla          | Ação                                                                     |
+| -------------- | ------------------------------------------------------------------------ |
+| `WASD` / setas | andar                                                                    |
+| `C`            | **dash**: dispara rápido para fugir. Só desloca, **não empurra** ninguém |
+| `Espaço`       | **tiro** com a arma na mão; desarmado, **pega** a arma do chão           |
+| `R`            | **pegar** a arma do chão, **largar** a sua, ou **trocar** uma pela outra |
+| `Esc`          | menu: volume e sair da partida (o jogo **não** pausa)                    |
 
-No celular aparecem um direcional e o botão de dash na tela.
+No celular aparecem um direcional e os botões de pegar, dash e atacar na tela.
+
+### Armas
+
+Todo mundo começa a rodada desarmado. As armas aparecem em terra alta (nunca em cima de alguém) e
+vão surgindo mais durante a rodada (na enchente, a cada 3s). Quando a terra acaba, elas nascem
+**boiando na água** perto de quem ainda está vivo: até o fim dá pra se armar e jogar alguém pro fundo. Toda arma é de fogo e é jogada fora quando
+**acaba a munição**; quanto mais fraco cada tiro, mais munição a arma tem.
+Largada no chão, a arma guarda o desgaste. Quem afunda leva a arma junto pro fundo. Arma na água
+**boia por 10s** (dá pra pegar nadando; ela pisca no fim) e depois o mar leva.
+
+Da mais comum pra mais rara: **revólver** (40% das armas que aparecem), **espingarda** (30%),
+**submetralhadora** (20%) e **bazuca** (10%).
+
+As armas têm **assistência de mira**: no teclado só dá pra apontar em 8 direções, então o
+tiro vai em quem estiver a até 18° da direção apertada.
+
+| Arma                | Chance | Alcance   | Recarga | Desgaste   | Particularidade                                                                                                                                                                                                                                                                                                                                              |
+| ------------------- | ------ | --------- | ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Revólver**        | 40%    | 7,5 tiles | 0,55s   | 6 tiros    | Tiro reto de longe: **afasta** o primeiro caranguejo da mira (a bala para nele). **Sem rebote**                                                                                                                                                                                                                                                              |
+| **Espingarda**      | 30%    | 3,2 tiles | 1s      | 3 tiros    | Leque de chumbo (40°) que acerta todo mundo no cone e **arremessa longe** (mais forte de perto). O **rebote** joga quem atirou pra trás, um pouco menos longe que a vítima, mesmo errando                                                                                                                                                                    |
+| **Submetralhadora** | 20%    | 5 tiles   | 0,6s    | 30 balas   | Cada aperto solta uma **rajada de 6 balas** fracas e um pouco espalhadas. Uma bala sozinha quase não empurra, mas os empurrões **se somam**: a rajada inteira na mesma pessoa varre ela pra longe. Rebote leve por bala                                                                                                                                      |
+| **Bazuca**          | 10%    | 9 tiles   | 1,2s    | 2 foguetes | O foguete **voa pelo mapa** (dá pra desviar) e explode ao tocar alguém ou no fim do alcance. A explosão empurra **todo mundo** no raio pra longe do centro, **inclusive quem atirou** se estiver perto (dá pra usar de "rocket jump"), e **destrói o bloco atingido e os 8 em volta** (3×3), abrindo uma cratera que a água ocupa. Pesada: anda mais devagar |
+
+Os números ficam em [weapons.ts](packages/shared/src/weapons.ts), compartilhados entre o servidor
+e a predição do cliente.
 
 - A água **só sobe** e **acelera** com o tempo. Cada rodada sorteia um **ponto final**: a enchente começa pelo lado oposto, a terra encolhe em faixas e o último tile seco é **surpresa** (não é marcado): quem ler a água primeiro chega antes.
 - A cada rodada é sorteado um dos **11 mapas** (sem repetir o anterior). Você pode deixar **todos** no sorteio ou escolher **um ou mais**, no menu (vale para solo e criar sala) ou no lobby, inclusive depois do resultado final. A mecânica é a mesma; muda a geografia e o material (terra, madeira, telhado, coral, areia, lama):
@@ -28,14 +55,16 @@ No celular aparecem um direcional e o botão de dash na tela.
   - **Recife de Coral**: galhos de coral ramificados em água turquesa.
   - **Castelo de Areia**: torre, muralha com torreões, fosso e ponte levadiça.
   - **Manguezal**: lamaçal cortado por canais sinuosos, com água turva.
-- O dash serve para as duas coisas: **fugir** (da enchente ou de alguém; rende igual nadando) e **atacar** (arremessa na direção do dash, então mirar importa; na água o empurrado desliza ainda mais longe).
-- Nadando, o caranguejo sempre escala para sair da água (beira de telhado, muralha ou casco não vira armadilha).
-- Na água o fôlego acaba em cerca de 3s (rasa) ou 1,7s (funda), o que dá tempo de voltar nadando se você cair perto da costa.
-- As ondas comem a areia na linha d'água, e concha que fica no fundo é levada pelo mar.
-- Pontos: concha **+1**, concha dourada **+3**, jogar alguém que se afoga em até 4s **+2**, último de pé **+5**.
-- **Vence a rodada** o último sobrevivente. Se os últimos afundarem no mesmo instante, vence quem fez mais pontos naquela rodada; se empatarem também nos pontos, ninguém leva.
+- O dash serve para **fugir** (da enchente ou de alguém; rende igual nadando) e para encurtar a distância até um alvo, mas quem empurra é a **arma**. O tiro sai na direção apertada, então mirar importa; na água o empurrado desliza ainda mais longe.
+- Nadando, o caranguejo anda a **70%** da velocidade a pé e sempre escala para sair da água (beira de telhado, muralha ou casco não vira armadilha).
+- Na água o fôlego acaba em cerca de 4,5s (rasa) ou 2,5s (funda), o que dá tempo de voltar nadando se você cair perto da costa. Jogar alguém pra água funda afoga bem mais rápido.
+- As ondas comem a areia na linha d'água.
+- Pontos: acertar alguém que se afoga em até 6s **+2**, último de pé **+5**. Eles só servem pra ordenar a tabela: quem vence é quem tem mais estrelas.
+- **Vence a rodada** o último sobrevivente. Se os últimos afundarem no mesmo instante, é **empate**: ninguém leva a estrela.
 - Cada rodada vencida vale uma **estrela**. Ao fim de cada rodada aparece um quadro com todos os caranguejos e quantas estrelas cada um tem.
 - A partida tem **1, 3, 5 ou 7 rodadas** (cerca de 40s cada). Você escolhe no menu, e isso vale para jogar sozinho e para criar sala. No lobby, o anfitrião pode trocar, inclusive depois do resultado final, sem sair da sala.
+- **Vence a partida** quem tiver mais estrelas. Se no fim das rodadas houver empate no topo, entra uma **rodada extra de desempate**, e outra, até alguém ficar na frente (com um teto de 10 extras, que na prática nunca chega).
+- No resultado final dá pra ver quem está na sala e quantos bots tem, pra ajustar antes de jogar de novo.
 
 ## Stack e por quê
 
@@ -53,7 +82,7 @@ A arte não usa assets externos. Os sprites são desenhados como texto em [sprit
 
 ```
 packages/
-  shared/   regras puras: constantes, maré, terreno procedural, física, protocolo
+  shared/   regras puras: constantes, maré, terreno procedural, física, armas, protocolo
   server/   servidor HTTP + WebSocket, salas, simulação, bots, métricas
   client/   Phaser + UI em DOM, predição local e interpolação
 deploy/k8s/ manifests (kustomize)
@@ -115,6 +144,3 @@ npm run format       # prettier
 - Servidor de estáticos protegido contra path traversal, com CSP restritiva, `nosniff`, `frame-ancestors 'none'` e COOP.
 - Container: usuário não-root, filesystem somente leitura, `cap_drop: ALL`, sem npm/yarn na imagem.
 - CI: actions fixadas por **SHA de commit**, `npm audit` e **Trivy** bloqueando vulnerabilidades HIGH/CRITICAL na imagem.
-
-
-

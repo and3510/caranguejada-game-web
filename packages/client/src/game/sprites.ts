@@ -3,6 +3,8 @@
  * gerar as texturas em código permite trocar a cor da casca por jogador sem assets extras.
  */
 
+import type { WeaponKind } from '@caranguejada/shared';
+
 export const INK = '#2b1d14';
 
 type Palette = Record<string, string | null>;
@@ -45,17 +47,6 @@ export const CRAB_FRAMES: readonly PixelArt[] = [
   ],
 ];
 
-export const SHELL_ART: PixelArt = [
-  '..oooo..',
-  '.ohhhho.',
-  'ohwhwhwo',
-  'ohwhwhwo',
-  '.ohhhho.',
-  '..oddo..',
-  '...oo...',
-  '........',
-];
-
 /** Estrela de rodada vencida. */
 export const STAR_ART: PixelArt = [
   '....o....',
@@ -70,9 +61,6 @@ export const STAR_ART: PixelArt = [
 ];
 
 export const STAR_PALETTE: Palette = { o: INK, y: '#f2c14e', h: '#fff2b0' };
-
-export const SHELL_PALETTE: Palette = { o: INK, h: '#f0a39a', w: '#fbe7d3', d: '#c47b70' };
-export const GOLD_SHELL_PALETTE: Palette = { o: INK, h: '#f2c14e', w: '#fff2b0', d: '#b8862d' };
 
 function shade(hex: number, amount: number): string {
   const r = (hex >> 16) & 0xff;
@@ -123,3 +111,95 @@ export function pixelArtCanvas(art: PixelArt, palette: Palette): HTMLCanvasEleme
 export function crabCanvas(color: number, frame = 0): HTMLCanvasElement {
   return pixelArtCanvas(CRAB_FRAMES[frame % CRAB_FRAMES.length]!, crabPalette(color));
 }
+
+/**
+ * Armas, desenhadas apontando para a direita com o cabo à esquerda
+ * (a mão do caranguejo segura no `grip`; nas de fogo o cano termina na borda direita).
+ */
+export const WEAPON_ART: Record<WeaponKind, PixelArt> = {
+  espingarda: [
+    '........................',
+    '...........oooooooooooo.',
+    '..ooooooooowwwwwwwwwwwwo',
+    '.ohhhdhhmmmsssssssssssso',
+    'ohhhdhhhmmmodhdhdoooooo.',
+    'ohhdhhhdmmmoooooo.......',
+    'ohdhhhooooo.............',
+    '.ooooo..................',
+  ],
+  revolver: [
+    '..omoooo......o.',
+    '..omssssooooooso',
+    '...omlmmwwwwwwwo',
+    '...ommlmssssssso',
+    '..ohhdmmooooooo.',
+    '.ohhdoomo.......',
+    '.ohdhommo.......',
+    'ohdho.oo........',
+    'odhho...........',
+    '.ooo............',
+  ],
+  submetralhadora: [
+    '.................',
+    '.................',
+    '.ooooooooooo...o.',
+    'olllssssssssooowo',
+    'oloommmmmmmmsssso',
+    'olllmmmmmmmmoooo.',
+    '.oooomoomloo.....',
+    '....omoomlo......',
+    '...ommoomlo......',
+    '....oo.omlo......',
+    '........oo.......',
+  ],
+  bazuca: [
+    '.........oo.............',
+    '.o......ommo.........oo.',
+    'oGooooooommooooooooooGGo',
+    'oGjjjGjjjjGjjjjyyjjjGGGo',
+    'oGgggggggggggggyyggggGGo',
+    'oGgggggggggggggyyggggGGo',
+    'oGGGGGGGGGGGGGGyyGGGGGGo',
+    'oGoooooohhoohooooooooGGo',
+    '.o.....ohhooho.......oo.',
+    '........oo..o...........',
+  ],
+};
+
+/** Ponto de pega de cada arma (fração da largura/altura), usado como origem do sprite. */
+export const WEAPON_GRIP: Record<WeaponKind, { x: number; y: number }> = {
+  espingarda: { x: 0.3, y: 0.55 },
+  revolver: { x: 0.25, y: 0.55 },
+  submetralhadora: { x: 0.35, y: 0.5 },
+  // Bazuca vai no ombro: segura perto do meio do tubo.
+  bazuca: { x: 0.42, y: 0.5 },
+};
+
+export const WEAPON_PALETTE: Palette = {
+  o: INK,
+  h: '#a67040',
+  d: '#6e4626',
+  k: '#c4945c',
+  s: '#b9c4cc',
+  w: '#eef3f5',
+  p: '#d9573b',
+  l: '#5a606e',
+  m: '#4a4f5a',
+  g: '#6b7a3a',
+  G: '#4c582a',
+  j: '#8c9c54',
+  y: '#f2c14e',
+};
+
+export function weaponCanvas(kind: WeaponKind): HTMLCanvasElement {
+  return pixelArtCanvas(WEAPON_ART[kind], WEAPON_PALETTE);
+}
+
+/** Foguete da bazuca, apontando pra direita (gira com a direção do voo). */
+export const ROCKET_ART: PixelArt = [
+  '.oo......',
+  'oGGooooo.',
+  'oGgjjjjpo',
+  'oGGooooo.',
+  '.oo......',
+];

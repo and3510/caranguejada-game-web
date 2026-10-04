@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
     />
     <meta
       name="description"
@@ -26,68 +26,114 @@
     <!-- Menu inicial -->
     <section id="menu" class="screen">
       <div class="board menu-board">
-        <canvas id="title-crab" width="16" height="16" aria-hidden="true"></canvas>
-        <h1>Caranguejada</h1>
-        <p class="tagline">a água tá subindo. empurra quem tiver na beirada.</p>
+        <div class="menu-intro">
+          <canvas id="title-crab" width="16" height="16" aria-hidden="true"></canvas>
+          <h1>Caranguejada</h1>
+          <p class="tagline">a água tá subindo. pega uma arma e derruba quem tiver na beirada.</p>
 
-        <label class="field">
-          <span>Seu nome</span>
-          <input id="name" maxlength="14" autocomplete="nickname" spellcheck="false" />
-        </label>
+          <label class="field">
+            <span>Seu nome</span>
+            <input id="name" maxlength="14" autocomplete="nickname" spellcheck="false" />
+          </label>
+        </div>
 
-        <div class="field rounds-field">
-          <span>Rodadas</span>
-          <div id="menu-rounds" class="rounds" role="radiogroup" aria-label="Quantidade de rodadas">
-            <button type="button" role="radio" data-rounds="1">1</button>
-            <button type="button" role="radio" data-rounds="3">3</button>
-            <button type="button" role="radio" data-rounds="5">5</button>
-            <button type="button" role="radio" data-rounds="7">7</button>
+        <div class="menu-play">
+          <div class="field rounds-field">
+            <span>Rodadas</span>
+            <div
+              id="menu-rounds"
+              class="rounds"
+              role="radiogroup"
+              aria-label="Quantidade de rodadas"
+            >
+              <button type="button" role="radio" data-rounds="1">1</button>
+              <button type="button" role="radio" data-rounds="3">3</button>
+              <button type="button" role="radio" data-rounds="5">5</button>
+              <button type="button" role="radio" data-rounds="7">7</button>
+            </div>
           </div>
+
+          <details class="maps-field">
+            <summary>Mapas: <b id="menu-maps-summary">todos</b></summary>
+            <div id="menu-maps" class="maps"></div>
+          </details>
+
+          <div class="actions">
+            <button id="btn-solo" class="btn btn-primary">Jogar sozinho</button>
+            <button id="btn-create" class="btn">Criar sala</button>
+          </div>
+
+          <form id="join-form" class="join">
+            <input
+              id="code"
+              maxlength="4"
+              placeholder="CÓDIGO"
+              autocomplete="off"
+              spellcheck="false"
+              aria-label="Código da sala"
+            />
+            <button class="btn" type="submit">Entrar</button>
+          </form>
+
+          <p id="menu-error" class="error" role="alert"></p>
+
+          <details class="howto">
+            <summary>Como jogar</summary>
+            <ul>
+              <li class="touch-only">
+                No toque: arraste o dedo na <b>metade esquerda</b> da tela pra andar; na direita,
+                <b>ATACAR</b> atira (desarmado, pega a arma perto), <b>DASH</b> foge e
+                <b>LARGAR</b> solta ou troca a arma
+              </li>
+              <li><kbd>WASD</kbd> / setas: andar de lado (é caranguejo, né)</li>
+              <li>
+                <kbd>C</kbd>: dash — dispara rápido para fugir da água ou de alguém (não empurra
+                ninguém)
+              </li>
+              <li>
+                <kbd>R</kbd> ou <kbd>Espaço</kbd>: desarmado, pega a arma do chão. <kbd>R</kbd>
+                também larga a sua ou troca por outra
+              </li>
+              <li>
+                <kbd>Espaço</kbd>: já armado, atira. <b>Sem arma não dá pra atacar</b>, só fugir
+              </li>
+              <li><kbd>Esc</kbd>: menu (volume e sair da partida)</li>
+              <li>
+                a água entra por um lado e termina num ponto secreto: descubra qual é antes dos
+                outros
+              </li>
+            </ul>
+            <p>
+              A água invade a ilha das bordas para o centro, cada vez mais rápido. Na água o fôlego
+              acaba. O último de pé leva a rodada e ganha uma estrela; se os últimos afundarem
+              juntos, é empate e ninguém leva. Vence a partida quem tiver mais estrelas, e empate no
+              fim vira rodada extra de desempate.
+            </p>
+            <p>
+              Armas aparecem em terra alta (sem terra, boiando na água perto de você) e são jogadas
+              fora quando acaba a munição (quanto mais fraco o tiro, mais munição). Da mais comum
+              pra mais rara:
+            </p>
+            <ul class="weapons-list">
+              <li>
+                <b>Revólver</b> (6 tiros): tiro reto de longe que afasta o primeiro da mira, sem
+                rebote.
+              </li>
+              <li>
+                <b>Espingarda</b> (3 tiros): leque de chumbo de perto que arremessa longe, mas o
+                rebote te joga pra trás.
+              </li>
+              <li>
+                <b>Submetralhadora</b> (30 balas): cada aperto solta uma rajada de 6 balas fracas; a
+                rajada inteira na mesma pessoa varre ela pra longe.
+              </li>
+              <li>
+                <b>Bazuca</b> (2 foguetes): o foguete voa (dá pra desviar), explode em área e
+                destrói o bloco atingido e os 8 em volta. De perto, a explosão pega você também.
+              </li>
+            </ul>
+          </details>
         </div>
-
-        <details class="maps-field">
-          <summary>Mapas: <b id="menu-maps-summary">todos</b></summary>
-          <div id="menu-maps" class="maps"></div>
-        </details>
-
-        <div class="actions">
-          <button id="btn-solo" class="btn btn-primary">Jogar sozinho</button>
-          <button id="btn-create" class="btn">Criar sala</button>
-        </div>
-
-        <form id="join-form" class="join">
-          <input
-            id="code"
-            maxlength="4"
-            placeholder="CÓDIGO"
-            autocomplete="off"
-            spellcheck="false"
-            aria-label="Código da sala"
-          />
-          <button class="btn" type="submit">Entrar</button>
-        </form>
-
-        <p id="menu-error" class="error" role="alert"></p>
-
-        <details class="howto">
-          <summary>Como jogar</summary>
-          <ul>
-            <li><kbd>WASD</kbd> / setas: andar de lado (é caranguejo, né)</li>
-            <li>
-              <kbd>Espaço</kbd>: dash — dispara rápido para fugir da água ou de alguém, e joga longe
-              quem estiver no caminho
-            </li>
-            <li><kbd>Esc</kbd>: menu (volume e sair da partida)</li>
-            <li>
-              a água entra por um lado e termina num ponto secreto: descubra qual é antes dos outros
-            </li>
-          </ul>
-          <p>
-            A água invade a ilha das bordas para o centro, cada vez mais rápido. Na água o fôlego
-            acaba. Concha vale ponto, jogar alguém pro fundo vale mais, e o último de pé leva a
-            rodada.
-          </p>
-        </details>
       </div>
     </section>
 
@@ -98,61 +144,83 @@
           <h2>Fim da caranguejada!</h2>
           <ol id="ranking"></ol>
         </div>
-        <h2 class="room-title">Sala <span id="room-code" class="code"></span></h2>
-        <button id="btn-copy" class="btn btn-small">Copiar link</button>
-        <ul id="players" class="players"></ul>
-        <div class="field rounds-field">
-          <span>Rodadas</span>
-          <div
-            id="lobby-rounds"
-            class="rounds"
-            role="radiogroup"
-            aria-label="Quantidade de rodadas"
-          >
-            <button type="button" role="radio" data-rounds="1">1</button>
-            <button type="button" role="radio" data-rounds="3">3</button>
-            <button type="button" role="radio" data-rounds="5">5</button>
-            <button type="button" role="radio" data-rounds="7">7</button>
+        <div class="room-panel">
+          <h2 class="room-title">Sala <span id="room-code" class="code"></span></h2>
+          <button id="btn-copy" class="btn btn-small">Copiar link</button>
+          <p id="roster" class="muted roster"></p>
+          <ul id="players" class="players"></ul>
+          <div class="field rounds-field">
+            <span>Rodadas</span>
+            <div
+              id="lobby-rounds"
+              class="rounds"
+              role="radiogroup"
+              aria-label="Quantidade de rodadas"
+            >
+              <button type="button" role="radio" data-rounds="1">1</button>
+              <button type="button" role="radio" data-rounds="3">3</button>
+              <button type="button" role="radio" data-rounds="5">5</button>
+              <button type="button" role="radio" data-rounds="7">7</button>
+            </div>
+            <b id="lobby-rounds-label" class="rounds-label hidden"></b>
           </div>
-          <b id="lobby-rounds-label" class="rounds-label hidden"></b>
+          <details id="lobby-maps-box" class="maps-field">
+            <summary>Mapas: <b id="lobby-maps-summary">todos</b></summary>
+            <div id="lobby-maps" class="maps"></div>
+          </details>
+          <p id="lobby-maps-label" class="muted maps-label hidden"></p>
+          <div id="host-controls" class="actions">
+            <button id="btn-add-bot" class="btn btn-small">+ bot</button>
+            <button id="btn-remove-bot" class="btn btn-small">− bot</button>
+            <button id="btn-start" class="btn btn-primary">Começar!</button>
+          </div>
+          <p id="wait-host" class="muted hidden">Esperando quem criou a sala começar…</p>
+          <p id="lobby-error" class="error" role="alert"></p>
+          <button id="btn-leave" class="link">sair da sala</button>
         </div>
-        <details id="lobby-maps-box" class="maps-field">
-          <summary>Mapas: <b id="lobby-maps-summary">todos</b></summary>
-          <div id="lobby-maps" class="maps"></div>
-        </details>
-        <p id="lobby-maps-label" class="muted maps-label hidden"></p>
-        <div id="host-controls" class="actions">
-          <button id="btn-add-bot" class="btn btn-small">+ bot</button>
-          <button id="btn-remove-bot" class="btn btn-small">− bot</button>
-          <button id="btn-start" class="btn btn-primary">Começar!</button>
-        </div>
-        <p id="wait-host" class="muted hidden">Esperando quem criou a sala começar…</p>
-        <p id="lobby-error" class="error" role="alert"></p>
-        <button id="btn-leave" class="link">sair da sala</button>
       </div>
     </section>
 
     <!-- HUD durante a partida -->
     <section id="hud" class="hidden">
       <div class="hud-top">
-        <div class="chip" id="hud-round"></div>
+        <div class="chip" id="hud-round">
+          <span id="hud-round-label"></span><span class="hud-map" id="hud-map"></span>
+        </div>
         <div class="tide" aria-label="Quanto da ilha ainda está seco">
           <div class="tide-bar"><div id="tide-fill"></div></div>
           <span id="tide-label"></span>
         </div>
         <button id="btn-pause" class="chip btn-chip" aria-label="Abrir menu (Esc)">
-          menu <kbd>esc</kbd>
+          menu <kbd class="keys-only">esc</kbd>
         </button>
       </div>
       <ol id="scoreboard" class="scoreboard"></ol>
       <div id="toasts" class="toasts" aria-live="polite"></div>
       <div id="banner" class="banner hidden"></div>
       <div class="hud-bottom">
-        <div class="dash-meter" aria-label="Recarga do dash">
-          <span>dash</span>
-          <div class="dash-bar"><div id="dash-fill"></div></div>
+        <div class="hud-meters">
+          <div id="weapon-slot" class="weapon-slot empty" aria-label="Arma na mão">
+            <canvas id="weapon-icon" aria-hidden="true"></canvas>
+            <div class="weapon-info">
+              <div class="weapon-head">
+                <b id="weapon-name">sem arma</b>
+                <span id="weapon-uses"></span>
+              </div>
+              <div class="attack-bar" aria-label="Recarga do tiro">
+                <div id="attack-fill"></div>
+              </div>
+              <small id="weapon-hint"></small>
+            </div>
+          </div>
+          <div class="dash-meter" aria-label="Recarga do dash">
+            <span>dash</span>
+            <div class="dash-bar"><div id="dash-fill"></div></div>
+          </div>
         </div>
-        <div class="keys">setas/WASD: andar · espaço: dash · esc: menu</div>
+        <div class="keys keys-only">
+          WASD: andar · C: dash · espaço: tiro/pegar · R: pegar/largar arma · esc: menu
+        </div>
       </div>
     </section>
 
@@ -192,9 +260,22 @@
 
     <!-- Controles de toque -->
     <section id="touch" class="hidden">
-      <div id="stick" class="stick"><div id="stick-knob"></div></div>
+      <!-- Direcional flutuante: encosta em qualquer lugar da metade esquerda. -->
+      <div id="stick-zone" class="stick-zone">
+        <div id="stick" class="stick"><div id="stick-knob"></div></div>
+      </div>
+      <!-- Os botões carregam a informação (arma, munição, recargas): sem painéis extras. -->
       <div class="touch-buttons">
-        <button data-action="dash" class="tbtn tbtn-big">dash</button>
+        <button id="tbtn-grab" data-action="grab" class="tbtn tbtn-grab hidden">largar</button>
+        <button id="tbtn-dash" data-action="dash" class="tbtn tbtn-dash">
+          <span class="tbtn-fill" id="tbtn-dash-fill"></span>
+          <span class="tbtn-label">dash</span>
+        </button>
+        <button id="tbtn-attack" data-action="attack" class="tbtn tbtn-attack idle">
+          <span class="tbtn-fill" id="tbtn-attack-fill"></span>
+          <canvas id="tbtn-weapon" class="tbtn-weapon" aria-hidden="true"></canvas>
+          <span class="tbtn-label" id="tbtn-attack-label">sem arma</span>
+        </button>
       </div>
     </section>
 

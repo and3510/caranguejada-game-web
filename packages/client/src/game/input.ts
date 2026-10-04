@@ -1,12 +1,20 @@
 /**
  * Entrada unificada (teclado + toque). Direção é estado contínuo (segurar);
- * o dash é um toque acumulado até ser consumido pelo envio de rede/predição.
+ * dash, tiro e pegar/largar são toques acumulados até o envio de rede/predição consumir.
  */
 export interface Actions {
+  /** C: dash (só desloca). */
   dash: boolean;
+  /** Espaço: tiro com a arma na mão (desarmado, pega a arma do chão). */
+  attack: boolean;
+  /** R: pega, larga ou troca de arma. */
+  grab: boolean;
 }
 
-const KEYMAP: Record<string, 'dash' | 'up' | 'down' | 'left' | 'right'> = {
+type ActionName = keyof Actions;
+type Move = 'up' | 'down' | 'left' | 'right';
+
+const KEYMAP: Record<string, ActionName | Move> = {
   KeyW: 'up',
   ArrowUp: 'up',
   KeyS: 'down',
@@ -15,16 +23,24 @@ const KEYMAP: Record<string, 'dash' | 'up' | 'down' | 'left' | 'right'> = {
   ArrowLeft: 'left',
   KeyD: 'right',
   ArrowRight: 'right',
-  Space: 'dash',
-  ShiftLeft: 'dash',
-  KeyJ: 'dash',
+  KeyC: 'dash',
+  Space: 'attack',
+  KeyR: 'grab',
 };
+
+const isAction = (a: string): a is ActionName => a === 'dash' || a === 'attack' || a === 'grab';
+
+const noActions = (): Actions => ({ dash: false, attack: false, grab: false });
 
 export class InputController {
   private readonly held = new Set<string>();
-  private pendingDash = false;
+  private pending: Actions = noActions();
   private stick = { x: 0, y: 0 };
   enabled = false;
+  /** Tela de toque em uso (aparelho de toque, ou alguém já tocou na tela). */
+  touchMode = false;
+  /** Avisado quando o modo toque liga (a UI se redesenha). */
+  onTouchMode: () => void = () => {};
 
   constructor() {
     window.addEventListener('keydown', (e) => this.onKey(e, true));
@@ -40,7 +56,7 @@ export class InputController {
     if (!action || !this.enabled) return;
     e.preventDefault();
     if (down) {
-      if (!e.repeat && action === 'dash') this.pendingDash = true;
+      if (!e.repeat && isAction(action)) this.pending[action] = true;
       this.held.add(action);
     } else {
       this.held.delete(action);
@@ -50,7 +66,7 @@ export class InputController {
   /** Solta tudo (ex.: ao abrir o menu), para o caranguejo não sair andando sozinho. */
   release(): void {
     this.held.clear();
-    this.pendingDash = false;
+    this.pending = noActions();
   }
 
   direction(): { dx: number; dy: number } {
@@ -66,29 +82,57 @@ export class InputController {
 
   /** Lê sem consumir (para a predição local). */
   peekActions(): Actions {
-    return { dash: this.pendingDash };
+    return { ...this.pending };
+  }
+
+  /** Algum toque esperando envio? (manda na hora em vez de esperar o próximo pacote) */
+  hasPending(): boolean {
+    return this.pending.dash || this.pending.attack || this.pending.grab;
   }
 
   consumeActions(): Actions {
     const out = this.peekActions();
-    this.pendingDash = false;
+    this.pending = noActions();
     return out;
+  }
+
+  /**
+   * Modo toque: liga se o aparelho for de toque, ou no primeiro toque na tela (tablet
+   * com teclado, navegador de celular em "modo desktop"). Marca o body com `.touch`
+   * para o CSS esconder o que é de teclado e mostrar os botões.
+   */
+  private enableTouchMode(): void {
+    if (this.touchMode) return;
+    this.touchMode = true;
+    document.body.classList.add('touch');
+    const touchUi = document.getElementById('touch');
+    if (touchUi) touchUi.dataset.enabled = 'true';
+    this.onTouchMode();
   }
 
   private setupTouch(): void {
     const touchUi = document.getElementById('touch');
+    const zone = document.getElementById('stick-zone');
     const stick = document.getElementById('stick');
     const knob = document.getElementById('stick-knob');
-    if (!touchUi || !stick || !knob) return;
-    if (!matchMedia('(pointer: coarse)').matches) return;
-    touchUi.dataset.enabled = 'true';
+    if (!touchUi || !zone || !stick || !knob) return;
+    if (matchMedia('(pointer: coarse)').matches) this.enableTouchMode();
+    window.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (e.pointerType === 'touch') this.enableTouchMode();
+      },
+      { capture: true },
+    );
 
+    // Direcional flutuante: o centro vai pra onde o dedo encostou na metade esquerda,
+    // então dá pra andar sem mirar num botão pequeno. Solto, ele volta pro canto.
     let pointerId: number | null = null;
+    let center = { x: 0, y: 0 };
     const move = (e: PointerEvent) => {
-      const rect = stick.getBoundingClientRect();
-      const max = rect.width / 2;
-      let x = e.clientX - (rect.left + max);
-      let y = e.clientY - (rect.top + max);
+      const max = stick.offsetWidth / 2;
+      let x = e.clientX - center.x;
+      let y = e.clientY - center.y;
       const len = Math.hypot(x, y);
       if (len > max) {
         x = (x / len) * max;
@@ -98,27 +142,46 @@ export class InputController {
       const dead = len < max * 0.2;
       this.stick = dead ? { x: 0, y: 0 } : { x: x / max, y: y / max };
     };
-    const release = () => {
+    const release = (e: PointerEvent) => {
+      if (e.pointerId !== pointerId) return;
       pointerId = null;
       this.stick = { x: 0, y: 0 };
       knob.style.transform = '';
+      stick.style.left = '';
+      stick.style.top = '';
+      stick.style.bottom = '';
+      stick.classList.remove('on');
     };
-    stick.addEventListener('pointerdown', (e) => {
+    zone.addEventListener('pointerdown', (e) => {
+      if (pointerId !== null) return;
+      e.preventDefault();
       pointerId = e.pointerId;
-      stick.setPointerCapture(e.pointerId);
+      zone.setPointerCapture(e.pointerId);
+      const area = zone.getBoundingClientRect();
+      const half = stick.offsetWidth / 2;
+      // Mantém o direcional inteiro dentro da área, mesmo tocando na beirada.
+      const cx = Math.min(Math.max(e.clientX, area.left + half), area.right - half);
+      const cy = Math.min(Math.max(e.clientY, area.top + half), area.bottom - half);
+      center = { x: cx, y: cy };
+      stick.style.left = `${cx - area.left - half}px`;
+      stick.style.top = `${cy - area.top - half}px`;
+      stick.style.bottom = 'auto';
+      stick.classList.add('on');
       move(e);
     });
-    stick.addEventListener('pointermove', (e) => {
+    zone.addEventListener('pointermove', (e) => {
       if (e.pointerId === pointerId) move(e);
     });
-    stick.addEventListener('pointerup', release);
-    stick.addEventListener('pointercancel', release);
+    zone.addEventListener('pointerup', release);
+    zone.addEventListener('pointercancel', release);
 
-    touchUi.querySelectorAll<HTMLButtonElement>('[data-action="dash"]').forEach((btn) => {
+    touchUi.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((btn) => {
+      const action = btn.dataset.action ?? '';
+      if (!isAction(action)) return;
       btn.addEventListener('pointerdown', (e) => {
         e.preventDefault();
         if (!this.enabled) return;
-        this.pendingDash = true;
+        this.pending[action] = true;
         btn.classList.add('on');
       });
       const off = () => btn.classList.remove('on');

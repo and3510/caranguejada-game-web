@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SCORE, type Terrain } from '@caranguejada/shared';
+import { SCORE, WEAPONS, WEAPON_RULES, tideLevel, type Terrain } from '@caranguejada/shared';
 import { Simulation } from '../src/game/Simulation';
 
 const DT = 1 / 30;
@@ -27,6 +27,13 @@ function place(sim: Simulation, id: string, x: number, y: number) {
   return crab;
 }
 
+/** Arena limpa: sem armas espalhadas, para o teste controlar tudo. */
+function arena(seed: number, terrain = islandTerrain()) {
+  const sim = new Simulation(seed, ['a', 'b'], terrain);
+  sim.weapons.length = 0;
+  return sim;
+}
+
 function run(sim: Simulation, seconds: number) {
   const fx = [];
   const scores = [];
@@ -51,19 +58,357 @@ describe('Simulation', () => {
     expect(sim.winner()).toBe('a');
   });
 
-  it('empurrão com bote derruba e credita afogamento a quem empurrou', () => {
-    const sim = new Simulation(2, ['a', 'b'], islandTerrain());
-    place(sim, 'a', 13.2, 10.5);
-    place(sim, 'b', 14.2, 10.5); // na beirada leste da ilha
+  it('dash só desloca: esbarrar não empurra ninguém', () => {
+    const sim = arena(2);
+    place(sim, 'a', 12.2, 10.5);
+    place(sim, 'b', 13.2, 10.5);
     sim.setInput('a', { dx: 1, dy: 0, seq: 1, dash: true });
-    const first = run(sim, 0.3);
-    expect(first.fx.some((e) => e.kind === 'shove' && e.by === 'a' && e.target === 'b')).toBe(true);
-    expect(sim.crabs.get('b')!.x).toBeGreaterThan(16); // voou pro mar
+    const { fx } = run(sim, 0.3);
+    expect(fx.some((e) => e.kind === 'dash' && e.by === 'a')).toBe(true);
+    expect(fx.some((e) => e.kind === 'hit')).toBe(false);
+    expect(sim.crabs.get('b')!.stunT).toBe(0);
+    expect(sim.crabs.get('b')!.x).toBeLessThan(15); // continua na ilha
+  });
+
+  it('desarmado, o ataque não faz nada', () => {
+    const sim = arena(2);
+    place(sim, 'a', 13.2, 10.5);
+    place(sim, 'b', 14, 10.5);
+    sim.setInput('a', { dx: 1, dy: 0, seq: 1, attack: true });
+    const { fx } = run(sim, 0.3);
+    expect(fx.some((e) => e.kind === 'swing' || e.kind === 'hit')).toBe(false);
+  });
+
+  it('desarmado, o Espaço também pega a arma do chão (sem atirar no mesmo toque)', () => {
+    const sim = arena(6);
+    const a = place(sim, 'a', 10.5, 10.5);
+    sim.weapons.push({ id: 1, x: 10.7, y: 10.5, kind: 'revolver', uses: 4, afloat: 0 });
+    sim.setInput('a', { dx: 0, dy: 0, seq: 1, attack: true });
+    const { fx } = run(sim, DT);
+    expect(a.weapon).toBe('revolver');
+    expect(a.uses).toBe(4);
+    expect(sim.weapons).toHaveLength(0);
+    // Pegou a arma: não atirou no mesmo tick (nem gastou munição).
+    expect(fx.some((e) => e.kind === 'swing' || e.kind === 'hit')).toBe(false);
+  });
+
+  it('já armado, o Espaço ataca: só R larga ou troca de arma', () => {
+    const sim = arena(7);
+    const a = place(sim, 'a', 10.5, 10.5);
+    sim.giveWeapon('a', 'revolver');
+    sim.weapons.push({ id: 1, x: 10.7, y: 10.5, kind: 'espingarda', uses: 3, afloat: 0 });
+    sim.setInput('a', { dx: 1, dy: 0, seq: 1, attack: true });
+    const { fx } = run(sim, DT);
+    expect(a.weapon).toBe('revolver'); // não trocou
+    expect(sim.weapons).toHaveLength(1); // a do chão continua lá
+    expect(fx.some((e) => e.kind === 'swing' && e.weapon === 'revolver')).toBe(true);
+  });
+
+  it('tiro de revólver joga pro mar e credita o afogamento a quem atirou', () => {
+    const sim = arena(2);
+    sim.giveWeapon('a', 'revolver');
+    place(sim, 'a', 11.5, 10.5);
+    place(sim, 'b', 14.5, 10.5); // na beirada leste da ilha
+    sim.setInput('a', { dx: 1, dy: 0, seq: 1, attack: true });
+    const first = run(sim, 0.4);
+    expect(first.fx).toContainEqual(
+      expect.objectContaining({ kind: 'hit', by: 'a', target: 'b', weapon: 'revolver' }),
+    );
+    expect(sim.crabs.get('b')!.x).toBeGreaterThan(15); // voou pro mar
 
     sim.setInput('a', { dx: 0, dy: 0, seq: 2 });
-    const { scores } = run(sim, 4);
+    const { scores, fx } = run(sim, 6);
     expect(sim.crabs.get('b')!.alive).toBe(false);
     expect(scores).toContainEqual({ playerId: 'a', points: SCORE.fatalShove });
+    expect(fx).toContainEqual(
+      expect.objectContaining({ kind: 'drown', by: 'a', weapon: 'revolver' }),
+    );
+  });
+
+  it('o tiro só pega quem está na frente', () => {
+    const sim = arena(2);
+    sim.giveWeapon('a', 'revolver');
+    place(sim, 'a', 10, 10.5);
+    place(sim, 'b', 9, 10.5); // atrás
+    sim.setInput('a', { dx: 1, dy: 0, seq: 1, attack: true });
+    const { fx } = run(sim, 0.2);
+    expect(fx.some((e) => e.kind === 'swing')).toBe(true);
+    expect(fx.some((e) => e.kind === 'hit')).toBe(false);
+  });
+
+  it('espingarda: leque de chumbo arremessa a vítima e o rebote joga quem atirou pra trás', () => {
+    const sim = arena(2);
+    sim.giveWeapon('a', 'espingarda');
+    const a = place(sim, 'a', 9, 10.5);
+    const b = place(sim, 'b', 11.5, 10.5); // 2,5 tiles
+    sim.setInput('a', { dx: 1, dy: 0, seq: 1, attack: true });
+    const { fx } = run(sim, DT);
+    expect(fx).toContainEqual(
+      expect.objectContaining({ kind: 'hit', by: 'a', target: 'b', weapon: 'espingarda' }),
+    );
+    const victim = Math.hypot(b.kx, b.ky);
+    const recoil = Math.hypot(a.kx, a.ky);
+    expect(a.kx).toBeLessThan(0); // rebote pra trás
+    expect(recoil).toBeGreaterThan(0);
+    expect(recoil).toBeLessThan(victim); // vai um pouco menos longe que a vítima
+  });
+
+  it('espingarda: alcance curto, menor que o do revólver', () => {
+    expect(WEAPONS.espingarda.reach).toBeLessThan(WEAPONS.revolver.reach);
+
+    const sim = arena(2);
+    sim.giveWeapon('a', 'espingarda');
+    const a = place(sim, 'a', 6, 10.5);
+    place(sim, 'b', 6 + WEAPONS.espingarda.reach + 1.5, 10.5); // fora do alcance
+    sim.setInput('a', { dx: 1, dy: 0, seq: 1, attack: true });
+    const { fx } = run(sim, DT);
+    expect(fx.some((e) => e.kind === 'hit')).toBe(false);
+    expect(a.kx).toBeLessThan(0); // errou, mas o rebote vem igual
+  });
+
+  it('revólver: tiro de longe afasta o primeiro da mira, sem rebote', () => {
+    const sim = new Simulation(2, ['a', 'b', 'c'], islandTerrain());
+    sim.weapons.length = 0;
+    sim.giveWeapon('a', 'revolver');
+    const a = place(sim, 'a', 5.5, 10.5);
+    const b = place(sim, 'b', 11.5, 10.6); // 6 tiles na linha
+    const c = place(sim, 'c', 13, 10.5); // atrás do b: a bala para no primeiro
+    sim.setInput('a', { dx: 1, dy: 0, seq: 1, attack: true });
+    const { fx } = run(sim, DT);
+    expect(fx).toContainEqual(
+      expect.objectContaining({ kind: 'hit', by: 'a', target: 'b', weapon: 'revolver' }),
+    );
+    expect(fx.some((e) => e.kind === 'hit' && e.target === 'c')).toBe(false);
+    expect(b.kx).toBeGreaterThan(0); // afastado na direção do tiro
+    expect(c.kx).toBe(0);
+    expect(a.kx).toBe(0); // sem rebote
+    const swing = fx.find((e) => e.kind === 'swing')!;
+    expect(swing.value).toBeCloseTo(6, 0); // a bala foi até o b
+  });
+
+  it('arma de fogo tem assistência de mira (teclado só aponta 8 direções)', () => {
+    const sim = arena(2);
+    sim.giveWeapon('a', 'revolver');
+    place(sim, 'a', 5.5, 10.5);
+    const b = place(sim, 'b', 11.5, 12); // ~14° abaixo da linha: apertando "direita" pega
+    sim.setInput('a', { dx: 1, dy: 0, seq: 1, attack: true });
+    const { fx } = run(sim, DT);
+    expect(fx.some((e) => e.kind === 'hit' && e.target === 'b')).toBe(true);
+    expect(b.ky).toBeGreaterThan(0);
+  });
+
+  it('revólver: quem está longe da linha não leva', () => {
+    const sim = arena(2);
+    sim.giveWeapon('a', 'revolver');
+    place(sim, 'a', 5.5, 10.5);
+    place(sim, 'b', 9, 13); // ~35° fora da linha: nem a assistência alcança
+    sim.setInput('a', { dx: 1, dy: 0, seq: 1, attack: true });
+    const { fx } = run(sim, DT);
+    expect(fx.some((e) => e.kind === 'hit')).toBe(false);
+  });
+
+  it.each([
+    ['espingarda', 3],
+    ['revolver', 6],
+  ] as const)('%s quebra quando acaba o carregador (%i tiros)', (kind, shots) => {
+    expect(WEAPONS[kind].uses).toBe(shots);
+    const sim = arena(4);
+    sim.giveWeapon('a', kind);
+    place(sim, 'a', 8, 10.5);
+    place(sim, 'b', 12, 14);
+    const breaks = [];
+    for (let i = 0; i < shots; i++) {
+      const a = sim.crabs.get('a')!;
+      Object.assign(a, { attackCooldown: 0, x: 8, y: 10.5, kx: 0, ky: 0 });
+      expect(a.weapon).toBe(kind);
+      sim.setInput('a', { dx: 1, dy: 0, seq: i + 1, attack: true });
+      breaks.push(...sim.step(DT).fx.filter((e) => e.kind === 'break'));
+    }
+    expect(breaks).toHaveLength(1);
+    expect(sim.crabs.get('a')!.weapon).toBeNull();
+  });
+
+  it('quanto mais fraco cada uso, mais usos a arma aguenta', () => {
+    const byPower = (['submetralhadora', 'revolver', 'espingarda', 'bazuca'] as const).map(
+      (k) => WEAPONS[k],
+    );
+    for (let i = 1; i < byPower.length; i++) {
+      expect(byPower[i]!.impulse).toBeGreaterThan(byPower[i - 1]!.impulse);
+      expect(byPower[i]!.uses).toBeLessThan(byPower[i - 1]!.uses);
+    }
+  });
+
+  it('submetralhadora: um aperto solta uma rajada de balas fracas que somam', () => {
+    const sim = arena(2);
+    sim.giveWeapon('a', 'submetralhadora');
+    place(sim, 'a', 6, 10.5);
+    const b = place(sim, 'b', 9, 10.5);
+    sim.setInput('a', { dx: 1, dy: 0, seq: 1, attack: true });
+    const first = sim.step(DT);
+    expect(first.fx.filter((e) => e.kind === 'swing')).toHaveLength(1); // só a 1ª bala
+    const single = Math.hypot(b.kx, b.ky);
+    expect(single).toBeGreaterThan(0);
+    expect(single).toBeLessThan(WEAPONS.revolver.impulse); // uma bala sozinha é fraca
+
+    sim.setInput('a', { dx: 0, dy: 0, seq: 2 });
+    const rest = run(sim, 0.4);
+    const shots = 1 + rest.fx.filter((e) => e.kind === 'swing').length;
+    expect(shots).toBe(WEAPON_RULES.burstShots);
+    expect(sim.crabs.get('a')!.uses).toBe(WEAPONS.submetralhadora.uses - shots);
+    expect(b.x).toBeGreaterThan(9 + 1.5); // a rajada inteira varreu pra longe
+  });
+
+  it('submetralhadora: o pente de 30 balas acaba em 5 rajadas', () => {
+    const sim = arena(2);
+    sim.giveWeapon('a', 'submetralhadora');
+    place(sim, 'a', 8, 10.5);
+    place(sim, 'b', 12, 14);
+    const breaks = [];
+    for (let i = 0; i < 5; i++) {
+      const a = sim.crabs.get('a')!;
+      Object.assign(a, { attackCooldown: 0, x: 8, y: 10.5, kx: 0, ky: 0 });
+      sim.setInput('a', { dx: 1, dy: 0, seq: i + 1, attack: true });
+      breaks.push(...run(sim, 0.5).fx.filter((e) => e.kind === 'break'));
+    }
+    expect(breaks).toHaveLength(1);
+    expect(sim.crabs.get('a')!.weapon).toBeNull();
+  });
+
+  it('bazuca: o foguete voa, explode em quem tocar, empurra em área e abre cratera', () => {
+    const sim = new Simulation(2, ['a', 'b', 'c'], islandTerrain());
+    sim.weapons.length = 0;
+    sim.giveWeapon('a', 'bazuca');
+    place(sim, 'a', 5.5, 10.5);
+    place(sim, 'b', 11, 10.5);
+    const c = place(sim, 'c', 11.8, 11.2); // ao lado do b: pega a explosão também
+    sim.setInput('a', { dx: 1, dy: 0, seq: 1, attack: true });
+    const launch = sim.step(DT);
+    expect(launch.fx.some((e) => e.kind === 'swing' && e.weapon === 'bazuca')).toBe(true);
+    expect(launch.fx.some((e) => e.kind === 'hit')).toBe(false); // ainda voando
+    expect(sim.rockets).toHaveLength(1);
+
+    sim.setInput('a', { dx: 0, dy: 0, seq: 2 });
+    const { fx } = run(sim, 1);
+    const boom = fx.find((e) => e.kind === 'boom')!;
+    expect(boom).toBeDefined();
+    expect(sim.rockets).toHaveLength(0);
+    expect(fx.some((e) => e.kind === 'hit' && e.target === 'b')).toBe(true);
+    expect(fx.some((e) => e.kind === 'hit' && e.target === 'c')).toBe(true);
+    expect(c.lastShovedBy).toBe('a');
+    // Destrói o bloco atingido e os 8 em volta; o resto da ilha fica intacto.
+    const cx = Math.floor(boom.x);
+    const cy = Math.floor(boom.y);
+    const height = (tx: number, ty: number) => sim.terrain.heights[ty * sim.terrain.width + tx];
+    expect(height(cx, cy)).toBe(8 - WEAPON_RULES.craterCenterDepth);
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        expect(height(cx + dx, cy + dy)).toBe(8 - WEAPON_RULES.craterRingDepth);
+      }
+    }
+    expect(height(cx + 2, cy)).toBe(8);
+    expect(height(cx, cy - 2)).toBe(8);
+  });
+
+  it('bazuca: quem atira colado no alvo leva a própria explosão (rocket jump)', () => {
+    const sim = arena(2);
+    sim.giveWeapon('a', 'bazuca');
+    const a = place(sim, 'a', 8, 10.5);
+    place(sim, 'b', 9.2, 10.5);
+    sim.setInput('a', { dx: 1, dy: 0, seq: 1, attack: true });
+    const { fx } = run(sim, 0.2);
+    expect(fx.some((e) => e.kind === 'hit' && e.target === 'a')).toBe(true);
+    expect(a.lastShovedBy).toBeNull(); // se explodir sozinho não dá ponto a ninguém
+  });
+
+  it('bazuca: foguete que não acha ninguém explode no fim do alcance', () => {
+    const sim = arena(2);
+    sim.giveWeapon('a', 'bazuca');
+    place(sim, 'a', 2.5, 10.5);
+    place(sim, 'b', 10, 2); // fora da linha
+    sim.setInput('a', { dx: 1, dy: 0, seq: 1, attack: true });
+    const { fx } = run(sim, 1.5);
+    const boom = fx.find((e) => e.kind === 'boom')!;
+    expect(boom.x).toBeCloseTo(2.5 + WEAPONS.bazuca.reach, 0);
+  });
+
+  it('R pega a arma do chão, larga, e troca uma pela outra (com o desgaste)', () => {
+    const sim = arena(5);
+    const a = place(sim, 'a', 10.5, 10.5);
+    sim.weapons.push({ id: 1, x: 10.7, y: 10.5, kind: 'revolver', uses: 4, afloat: 0 });
+    sim.setInput('a', { dx: 0, dy: 0, seq: 1, grab: true });
+    sim.step(DT);
+    expect(a.weapon).toBe('revolver');
+    expect(a.uses).toBe(4);
+    expect(sim.weapons).toHaveLength(0);
+
+    sim.weapons.push({ id: 2, x: 10.3, y: 10.5, kind: 'espingarda', uses: 2, afloat: 0 });
+    sim.setInput('a', { dx: 0, dy: 0, seq: 2, grab: true });
+    sim.step(DT);
+    expect(a.weapon).toBe('espingarda');
+    expect(a.uses).toBe(2);
+    expect(sim.weapons).toEqual([
+      expect.objectContaining({ kind: 'revolver', uses: 4, afloat: 0 }),
+    ]);
+
+    a.x = 6.5; // longe de tudo: R só larga
+    sim.setInput('a', { dx: 0, dy: 0, seq: 3, grab: true });
+    sim.step(DT);
+    expect(a.weapon).toBeNull();
+    expect(sim.weapons).toHaveLength(2);
+  });
+
+  it('sem terra sobrando, arma nasce boiando na água perto de quem está vivo', () => {
+    // Tudo plano e baixo: a maré já cobriu, só sobra água rasa.
+    const t = islandTerrain();
+    t.heights.fill(Math.floor(tideLevel(30))); // tudo já embaixo d'água
+    const sim = new Simulation(12, ['a', 'b'], t);
+    sim.weapons.length = 0;
+    place(sim, 'a', 10.5, 10.5);
+    place(sim, 'b', 15.5, 15.5);
+    sim.time = 30; // enchente: nasce arma mais rápido
+    for (let i = 0; i < (WEAPON_RULES.floodSpawnEverySeconds + DT) / DT; i++) {
+      for (const c of sim.crabs.values()) c.breath = 1; // os dois seguem nadando
+      sim.step(DT);
+    }
+    expect(sim.weapons.length).toBeGreaterThan(0);
+    for (const w of sim.weapons) {
+      const near = Math.min(
+        ...['a', 'b'].map((id) => {
+          const c = sim.crabs.get(id)!;
+          return Math.hypot(c.x - w.x, c.y - w.y);
+        }),
+      );
+      expect(near).toBeLessThanOrEqual(WEAPON_RULES.floatSpawnNear + 1);
+    }
+  });
+
+  it('arma na água boia um tempo (dá pra pegar nadando) e depois o mar leva', () => {
+    const sim = arena(13);
+    place(sim, 'a', 10.5, 10.5);
+    place(sim, 'b', 12.5, 12.5);
+    sim.weapons.push({ id: 1, x: 1.5, y: 1.5, kind: 'revolver', uses: 6, afloat: 0 }); // no mar
+    run(sim, WEAPON_RULES.floatSeconds - 1);
+    expect(sim.weapons.some((w) => w.id === 1)).toBe(true);
+
+    // Nadando até ela, dá pra pegar.
+    const a = place(sim, 'a', 1.6, 1.5);
+    a.breath = 1;
+    sim.setInput('a', { dx: 0, dy: 0, seq: 1, grab: true });
+    sim.step(DT);
+    expect(a.weapon).toBe('revolver');
+
+    sim.weapons.push({ id: 2, x: 18.5, y: 1.5, kind: 'submetralhadora', uses: 30, afloat: 0 });
+    run(sim, WEAPON_RULES.floatSeconds + 0.5);
+    expect(sim.weapons.some((w) => w.id === 2)).toBe(false);
+  });
+
+  it('a rodada já começa com armas no chão, em terra', () => {
+    const sim = new Simulation(11, ['a', 'b', 'c', 'd'], islandTerrain());
+    expect(sim.weapons.length).toBeGreaterThanOrEqual(2);
+    for (const w of sim.weapons) {
+      expect(sim.terrain.heights[Math.floor(w.y) * sim.terrain.width + Math.floor(w.x)]).toBe(8);
+    }
   });
 
   it('quem cai perto da costa consegue voltar nadando', () => {
@@ -80,49 +425,28 @@ describe('Simulation', () => {
     const sim = new Simulation(4, ['a', 'b'], islandTerrain());
     place(sim, 'b', 10.5, 10.5);
     place(sim, 'a', 1.5, 1.5);
-    run(sim, 1.5);
+    run(sim, 3);
     expect(sim.crabs.get('a')!.alive).toBe(true);
-    run(sim, 2.5);
+    run(sim, 3);
     expect(sim.crabs.get('a')!.alive).toBe(false);
   });
 
-  it('último sobrevivente vence mesmo com menos pontos', () => {
+  it('último sobrevivente vence a rodada', () => {
     const sim = new Simulation(7, ['a', 'b'], islandTerrain());
     place(sim, 'a', 10.5, 10.5);
     place(sim, 'b', 1.5, 1.5);
-    sim.roundPoints.set('b', 10);
-    run(sim, 5);
-    expect(sim.roundResult()).toEqual({ winner: 'a', byPoints: false });
+    run(sim, 6);
+    expect(sim.winner()).toBe('a');
   });
 
-  it('se os dois últimos afundam juntos, vence quem tem mais pontos na rodada', () => {
+  it('se os últimos afundam juntos é empate: ninguém leva a rodada', () => {
     const sim = new Simulation(8, ['a', 'b'], islandTerrain());
     place(sim, 'a', 1.5, 1.5);
     place(sim, 'b', 18.5, 18.5); // mesma profundidade: afundam no mesmo tick
-    sim.roundPoints.set('b', 3);
-    sim.roundPoints.set('a', 1);
-    run(sim, 5);
+    run(sim, 6);
     expect(sim.crabs.get('a')!.diedAt).toBe(sim.crabs.get('b')!.diedAt);
-    expect(sim.roundResult()).toEqual({ winner: 'b', byPoints: true });
-  });
-
-  it('afundam juntos e empatam nos pontos: ninguém vence', () => {
-    const sim = new Simulation(9, ['a', 'b'], islandTerrain());
-    place(sim, 'a', 1.5, 1.5);
-    place(sim, 'b', 18.5, 18.5);
-    sim.shells.length = 0;
-    run(sim, 5);
-    expect(sim.roundResult()).toEqual({ winner: null, byPoints: false });
-  });
-
-  it('coleta conchas e pontua', () => {
-    const sim = new Simulation(5, ['a', 'b'], islandTerrain());
-    sim.shells.length = 0;
-    sim.shells.push({ id: 99, x: 10.5, y: 10.5, gold: true });
-    place(sim, 'a', 10.4, 10.5);
-    const { scores } = run(sim, DT);
-    expect(scores).toContainEqual({ playerId: 'a', points: SCORE.goldShell });
-    expect(sim.shells).toHaveLength(0);
+    expect(sim.isOver()).toBe(true);
+    expect(sim.winner()).toBeNull();
   });
 
   it('a maré eventualmente cobre tudo (rodada sempre termina)', () => {

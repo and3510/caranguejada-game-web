@@ -110,9 +110,12 @@ export default function () {
 
       if (isHost) {
         // Dá tempo dos outros PLAYERS_PER_ROOM-1 jogadores da sala entrarem antes de começar.
-        socket.setTimeout(() => {
-          socket.send(JSON.stringify({ t: 'start' }));
-        }, (ROOM_FILL_BUFFER_S + (PLAYERS_PER_ROOM - 1) * INTRA_ROOM_STAGGER_S) * 1000);
+        socket.setTimeout(
+          () => {
+            socket.send(JSON.stringify({ t: 'start' }));
+          },
+          (ROOM_FILL_BUFFER_S + (PLAYERS_PER_ROOM - 1) * INTRA_ROOM_STAGGER_S) * 1000,
+        );
       }
     });
 
@@ -128,6 +131,8 @@ export default function () {
           dx: Math.random() * 2 - 1,
           dy: Math.random() * 2 - 1,
           dash: Math.random() < 0.05,
+          attack: Math.random() < 0.08,
+          grab: Math.random() < 0.03,
         }),
       );
       inputsSent.add(1);

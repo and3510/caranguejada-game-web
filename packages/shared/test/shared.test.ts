@@ -7,6 +7,8 @@ import {
   MAP_WIDTH,
   MAX_TILE_HEIGHT,
   TIDE,
+  WEAPONS,
+  WEAPON_KINDS,
   createBody,
   decodeHeights,
   encodeHeights,
@@ -17,6 +19,7 @@ import {
   landRatio,
   lastLand,
   parseClientMessage,
+  pickWeaponKind,
   randomRoomCode,
   sanitizeName,
   stepBody,
@@ -191,7 +194,14 @@ describe('protocol', () => {
       dx: 1,
       dy: -1,
       dash: false,
+      attack: false,
+      grab: false,
     });
+    expect(
+      parseClientMessage(
+        '{"t":"input","seq":1,"dx":0,"dy":0,"dash":true,"attack":true,"grab":true}',
+      ),
+    ).toMatchObject({ dash: true, attack: true, grab: true });
   });
 
   it('aceita só quantidades de rodada válidas', () => {
@@ -219,6 +229,26 @@ describe('protocol', () => {
     expect(sanitizeName('')).toBe('Siri');
     expect(sanitizeName(42)).toBe('Siri');
     expect(sanitizeName('a'.repeat(50))).toHaveLength(14);
+  });
+});
+
+describe('armas', () => {
+  it('raridade: revólver > espingarda > submetralhadora > bazuca', () => {
+    const order = ['revolver', 'espingarda', 'submetralhadora', 'bazuca'] as const;
+    for (let i = 1; i < order.length; i++) {
+      expect(WEAPONS[order[i]!].weight).toBeLessThan(WEAPONS[order[i - 1]!].weight);
+    }
+  });
+
+  it('o sorteio respeita os pesos (40/30/20/10%)', () => {
+    const n = 10_000;
+    const count = Object.fromEntries(WEAPON_KINDS.map((k) => [k, 0])) as Record<string, number>;
+    // Rolagens espalhadas por igual em [0, 1): mede a fatia de cada arma.
+    for (let i = 0; i < n; i++) count[pickWeaponKind((i + 0.5) / n)]!++;
+    expect(count.revolver! / n).toBeCloseTo(0.4, 2);
+    expect(count.espingarda! / n).toBeCloseTo(0.3, 2);
+    expect(count.submetralhadora! / n).toBeCloseTo(0.2, 2);
+    expect(count.bazuca! / n).toBeCloseTo(0.1, 2);
   });
 });
 

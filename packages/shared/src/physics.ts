@@ -20,6 +20,14 @@ export interface MoveInput {
   dy: number;
 }
 
+/** Multiplicadores de velocidade (arma carregada). */
+export interface MoveMods {
+  speed: number;
+  swim: number;
+}
+
+const NO_MODS: MoveMods = { speed: 1, swim: 1 };
+
 export function createBody(x: number, y: number): Body {
   return { x, y, kx: 0, ky: 0, fx: 0, fy: 1, dashT: 0, stunT: 0 };
 }
@@ -72,9 +80,10 @@ export function stepBody(
   terrain: Terrain,
   level: number,
   dt: number,
+  mods: MoveMods = NO_MODS,
 ): void {
   const swimming = depthAt(terrain, b.x, b.y, level) > 0;
-  const waterFactor = swimming ? CRAB.waterSpeedFactor : 1;
+  const walkFactor = swimming ? CRAB.waterSpeedFactor * mods.swim : mods.speed;
   let vx = 0;
   let vy = 0;
 
@@ -92,8 +101,8 @@ export function stepBody(
       const ny = input.dy / Math.max(1, len);
       b.fx = input.dx / len;
       b.fy = input.dy / len;
-      vx = nx * CRAB.speed * waterFactor;
-      vy = ny * CRAB.speed * waterFactor;
+      vx = nx * CRAB.speed * walkFactor;
+      vy = ny * CRAB.speed * walkFactor;
     }
   }
 
