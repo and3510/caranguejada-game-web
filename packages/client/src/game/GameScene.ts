@@ -24,7 +24,7 @@ import {
   type Terrain,
   type WeaponKind,
 } from '@caranguejada/shared';
-import { attractTerrain, type Store } from '../state';
+import { attractTerrain, settings, type Store } from '../state';
 import type { Sfx } from './audio';
 import type { InputController } from './input';
 import {
@@ -314,7 +314,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private drawTerrain(terrain: Terrain, level: number, version: number, kind: MapKind): void {
-    const frame = Math.floor(performance.now() / 450) % 2;
+    // Efeitos reduzidos: água parada (sem isso o mapa todo é redesenhado a cada 450ms).
+    const frame = settings.lowFx ? 0 : Math.floor(performance.now() / 450) % 2;
     if (this.terrainRenderer.draw(terrain, level, frame, version, kind))
       this.terrainTexture.refresh();
   }
@@ -812,7 +813,9 @@ export class GameScene extends Phaser.Scene {
           .setDepth(py - 6)
           .setScale(0);
         this.tweens.add({ targets: img, scale: 1, duration: 260, ease: 'Back.easeOut' });
-        this.tweens.add({ targets: img, y: py - 5, duration: 700, yoyo: true, repeat: -1 });
+        if (!settings.lowFx) {
+          this.tweens.add({ targets: img, y: py - 5, duration: 700, yoyo: true, repeat: -1 });
+        }
         this.weaponViews.set(w.id, img);
       }
       // Na água a arma boia balançando; nos últimos segundos pisca: o mar já vai levar.
@@ -820,7 +823,9 @@ export class GameScene extends Phaser.Scene {
       const now = performance.now();
       const leaving = w.afloat > WEAPON_RULES.floatSeconds - 3 && Math.floor(now / 120) % 2 === 0;
       img
-        .setRotation(floating ? -0.35 + Math.sin(now / 300 + w.id) * 0.25 : -0.35)
+        .setRotation(
+          floating && !settings.lowFx ? -0.35 + Math.sin(now / 300 + w.id) * 0.25 : -0.35,
+        )
         .setAlpha(leaving ? 0.35 : 1);
     }
     for (const [id, img] of this.weaponViews) {
@@ -940,11 +945,16 @@ export class GameScene extends Phaser.Scene {
     }
   }
 
+  /** Tremor de câmera (some nos efeitos reduzidos). */
+  private shake(duration: number, intensity: number): void {
+    if (!settings.lowFx) this.cameras.main.shake(duration, intensity);
+  }
+
   private dashStartFx(id: string, x: number, y: number, fx: number, fy: number): void {
     const px = x * TILE;
     const py = y * TILE;
     // Poeira levantada para trás.
-    for (let i = 0; i < 7; i++) {
+    for (let i = 0; i < (settings.lowFx ? 2 : 7); i++) {
       const spread = (Math.random() - 0.5) * 1.4;
       const dx = -fx + -fy * spread;
       const dy = -fy + fx * spread;
@@ -967,12 +977,13 @@ export class GameScene extends Phaser.Scene {
     }
     if (id === this.deps.store.you) {
       this.deps.sfx.dash();
-      this.cameras.main.shake(70, 0.0025);
+      this.shake(70, 0.0025);
     }
   }
 
   /** Cópia translúcida do sprite que some: rastro de velocidade. */
   private ghost(sprite: Phaser.GameObjects.Image): void {
+    if (settings.lowFx) return;
     const g = this.add
       .image(sprite.x, sprite.y, sprite.texture.key)
       .setOrigin(0.5, 0.7)
@@ -1016,7 +1027,7 @@ export class GameScene extends Phaser.Scene {
     }
     if (id === this.deps.store.you) {
       // Rebote sentido na câmera: as pesadas chacoalham bem mais.
-      this.cameras.main.shake(heavy ? 150 : 50, heavy ? 0.008 : 0.002);
+      this.shake(heavy ? 150 : 50, heavy ? 0.008 : 0.002);
     }
     this.shots.push(shot);
     if (id === this.deps.store.you || this.isNear(id)) this.deps.sfx.swing(kind);
@@ -1085,7 +1096,7 @@ export class GameScene extends Phaser.Scene {
         const by = (ty + 0.5) * TILE;
         // Pra fora do centro (o bloco do meio espalha pra todo lado).
         const out = Math.atan2(by - y, bx - x);
-        for (let i = 0; i < 4; i++) {
+        for (let i = 0; i < (settings.lowFx ? 1 : 4); i++) {
           const size = Math.random() < 0.5 ? 3 : 2;
           const chunk = this.add
             .rectangle(bx, by, size, size, colors[(tx + ty + i) & 3]!)
@@ -1149,7 +1160,7 @@ export class GameScene extends Phaser.Scene {
     // Tremor proporcional à distância de quem está assistindo.
     const me = this.local?.body;
     const near = me ? Math.hypot(me.x * TILE - x, me.y * TILE - y) < radius * 3 : false;
-    this.cameras.main.shake(near ? 260 : 120, near ? 0.012 : 0.004);
+    this.shake(near ? 260 : 120, near ? 0.012 : 0.004);
     if (near || this.cameras.main.worldView.contains(x, y)) this.deps.sfx.boom();
   }
 
@@ -1199,15 +1210,15 @@ export class GameScene extends Phaser.Scene {
     });
 
     if (involvesMe) {
-      this.cameras.main.shake(120, 0.005);
+      this.shake(120, 0.005);
       this.hitStopUntil = performance.now() + 45;
     } else {
-      this.cameras.main.shake(60, 0.0015);
+      this.shake(60, 0.0015);
     }
   }
 
   private splash(x: number, y: number): void {
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < (settings.lowFx ? 1 : 2); i++) {
       const ring = this.add
         .ellipse(x, y + 2, 6, 3)
         .setStrokeStyle(1, 0xf4efe6)
@@ -1223,7 +1234,7 @@ export class GameScene extends Phaser.Scene {
       });
     }
     // Gotas que sobem e caem.
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < (settings.lowFx ? 3 : 10); i++) {
       const d = this.add.rectangle(x, y, 1, 2, 0xcfe9f2).setDepth(9_600);
       const vx = (Math.random() - 0.5) * 22;
       const h = 8 + Math.random() * 10;
@@ -1244,7 +1255,8 @@ export class GameScene extends Phaser.Scene {
   }
 
   private puff(x: number, y: number, color: number, count: number, spread: number): void {
-    for (let i = 0; i < count; i++) {
+    const n = settings.lowFx ? Math.ceil(count / 3) : count;
+    for (let i = 0; i < n; i++) {
       const size = Math.random() < 0.3 ? 2 : 1;
       const p = this.add.rectangle(x, y, size, size, color).setDepth(9_500);
       const angle = Math.random() * Math.PI * 2;
@@ -1261,6 +1273,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private bubbles(x: number, y: number): void {
+    if (settings.lowFx) return;
     for (let i = 0; i < 6; i++) {
       const b = this.add
         .circle(x + (Math.random() - 0.5) * 8, y, 1 + Math.random() * 1.5)
@@ -1316,7 +1329,7 @@ export class GameScene extends Phaser.Scene {
       const pulse = 0.5 + 0.3 * Math.sin(now / 220 + w.id);
       if (depthAt(terrain, w.x, w.y, level) > 0) {
         // Boiando: ondinha em volta, como a de quem está nadando.
-        const r = 9 + Math.sin(now / 200 + w.id) * 1.5;
+        const r = 9 + (settings.lowFx ? 0 : Math.sin(now / 200 + w.id) * 1.5);
         g.lineStyle(1, 0xf4efe6, 0.8).strokeEllipse(px, py + 2, r * 2, r * 0.8);
       }
       g.lineStyle(1, WEAPONS[w.kind].color, isNear ? 1 : pulse);
@@ -1338,7 +1351,7 @@ export class GameScene extends Phaser.Scene {
       if (swimming) {
         // Ondinha em volta de quem está nadando.
         g.lineStyle(1, 0xf4efe6, 0.8);
-        const r = 7 + Math.sin(now / 200 + c.x) * 1;
+        const r = 7 + (settings.lowFx ? 0 : Math.sin(now / 200 + c.x));
         g.strokeEllipse(px, py + 2, r * 2, r * 0.8);
       } else {
         // Sombra no chão: "gruda" o caranguejo no terreno.

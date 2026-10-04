@@ -15,6 +15,12 @@ import {
   type WeaponItemSnapshot,
 } from '@caranguejada/shared';
 
+/**
+ * Preferências do jogador que a cena lê a cada quadro.
+ * `lowFx`: efeitos reduzidos (água parada, menos partículas, sem tremor): deixa o jogo mais leve.
+ */
+export const settings = { lowFx: false };
+
 export interface TimedSnapshot {
   /** performance.now() de quando chegou. */
   at: number;

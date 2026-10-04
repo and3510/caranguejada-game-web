@@ -18,6 +18,8 @@ Dá pra jogar sozinho (contra bots) ou criar uma sala e mandar o link pros amigo
 
 Depois que você cai, a câmera acompanha outro jogador e dá pra **trocar** durante a rodada: `Tab`/`E`/`→`/clique passam pro próximo, `Q`/`←` voltam, e no celular há botões ◀ ▶ na tela.
 
+**Efeitos reduzidos** (no menu inicial e no menu `Esc`): deixa o jogo mais leve, com a água parada, menos partículas e sem tremor de câmera. Liga sozinho em celular/tablet e pra quem usa "reduzir movimento" no sistema; a escolha fica salva.
+
 No celular aparecem um direcional e os botões de pegar, dash e atacar na tela (sem mouse, o caranguejo mira pra onde anda).
 
 Com uma arma na mão, uma **linha tracejada** mostra o alcance real dela na direção da mira: reta que

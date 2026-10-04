@@ -16,7 +16,7 @@ import { Sfx } from './game/audio';
 import { GameScene } from './game/GameScene';
 import { InputController } from './game/input';
 import { Connection } from './net/Connection';
-import { Store } from './state';
+import { Store, settings } from './state';
 import { Ui, renderMapsPicker, renderRoundsPicker, toggleMap } from './ui/ui';
 
 const store = new Store();
@@ -211,6 +211,29 @@ ui.btnCopy.addEventListener('click', () => {
 
 // ---------------------------------------------------------------- menu da partida
 // Não pausa a simulação (é multiplayer): só abre por cima e solta os controles.
+
+// Efeitos reduzidos: lembra a escolha; sem escolha, liga em aparelho de toque (celular/tablet)
+// e pra quem pediu "reduzir movimento" no sistema.
+const savedFx = storage.get('caranguejada:lowfx');
+settings.lowFx =
+  savedFx !== null
+    ? savedFx === '1'
+    : matchMedia('(pointer: coarse)').matches ||
+      matchMedia('(prefers-reduced-motion: reduce)').matches;
+// A mesma opção aparece no menu inicial e no menu da partida: ficam sincronizadas.
+const fxToggles = [...document.querySelectorAll<HTMLInputElement>('.fx-low')];
+const applyFx = () => {
+  for (const t of fxToggles) t.checked = settings.lowFx;
+  document.body.classList.toggle('low-fx', settings.lowFx);
+};
+applyFx();
+for (const toggle of fxToggles) {
+  toggle.addEventListener('change', () => {
+    settings.lowFx = toggle.checked;
+    storage.set('caranguejada:lowfx', settings.lowFx ? '1' : '0');
+    applyFx();
+  });
+}
 
 const savedVolume = Number.parseFloat(storage.get('caranguejada:volume') ?? '');
 sfx.setVolume(Number.isFinite(savedVolume) ? savedVolume : 0.7);
