@@ -40,8 +40,8 @@ Da mais comum pra mais rara: **revólver** (40% das armas que aparecem), **espin
 
 Ninguém morre por vida: o que mata continua sendo a água. Mas cada acerto soma **dano (%)** na
 vítima, e **quanto mais dano acumulado, mais longe os próximos acertos a jogam** (100% = o dobro do
-empurrão; teto de 200%, ou 3×). O número aparece ao lado do nome ("Aratu 46%") e esquenta de branco
-a vermelho. Zera a cada rodada. Tiro que erra não soma, e quem se explode sozinho com a bazuca não
+empurrão; teto de 200%, ou 3×). **Só você vê o seu** número (ao lado do seu nome, "Teste 46%", esquentando de branco
+a vermelho); o dos outros jogadores fica escondido. Zera a cada rodada. Tiro que erra não soma, e quem se explode sozinho com a bazuca não
 ganha dano.
 
 | Arma            | Empurrão base | Dano por acerto |

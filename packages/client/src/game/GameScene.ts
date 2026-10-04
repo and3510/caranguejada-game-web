@@ -743,14 +743,16 @@ export class GameScene extends Phaser.Scene {
   }
 
   /**
-   * Dano acumulado ao lado do nome ("Aratu 46%"): quanto mais alto, mais longe os tiros
-   * jogam esse caranguejo. A cor esquenta de branco a vermelho.
+   * Seu dano acumulado ao lado do seu nome ("Teste 46%"): quanto mais alto, mais longe os
+   * tiros te jogam. A cor esquenta de branco a vermelho.
    */
   private updateDamageLabel(view: CrabView, c: CrabRender): void {
-    const text = c.damage > 0 ? `${c.name} ${c.damage}%` : c.name;
-    if (view.label.text !== text) view.label.setText(text);
-    const hot = Math.min(1, c.damage / DAMAGE.max);
+    // Só o seu próprio dano aparece: o dos outros é segredo (ninguém sabe quem está "no ponto").
     const mine = c.id === this.deps.store.you;
+    const shown = mine ? c.damage : 0;
+    const text = shown > 0 ? `${c.name} ${shown}%` : c.name;
+    if (view.label.text !== text) view.label.setText(text);
+    const hot = Math.min(1, shown / DAMAGE.max);
     const base = mine ? [0xff, 0xe9, 0xa8] : [0xf4, 0xef, 0xe6];
     const rgb = base.map((v, i) => Math.round(v + ([0xff, 0x3b, 0x30][i]! - v) * hot));
     const color = `#${rgb.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
