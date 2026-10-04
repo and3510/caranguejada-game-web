@@ -1456,3 +1456,37 @@ input[type='range']:focus-visible::-webkit-slider-thumb {
   min-width: 70px;
   text-align: center;
 }
+
+/* ---------------------------------------------------------------- efeitos reduzidos */
+
+.fx-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.fx-toggle input {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  margin: 1px 0 0;
+  padding: 0;
+  accent-color: var(--coral);
+}
+
+.fx-toggle small {
+  display: block;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+/* Sem animações de interface (o alerta de enchente continua vermelho, só não pisca). */
+body.low-fx #title-crab,
+body.low-fx .tide.flood,
+body.low-fx .summary-board,
+body.low-fx .star.new {
+  animation: none;
+}
