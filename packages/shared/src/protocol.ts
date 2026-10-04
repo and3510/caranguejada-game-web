@@ -35,6 +35,8 @@ export interface CrabSnapshot {
   alive: boolean;
   /** Fôlego 0..1 */
   breath: number;
+  /** Dano acumulado na rodada (%): quanto maior, mais longe os acertos jogam. */
+  damage: number;
   dashing: boolean;
   stunned: boolean;
   /** Arma na mão (null = desarmado: só anda e dá dash). */
@@ -156,11 +158,22 @@ export interface InputMessage {
   seq: number;
   dx: number;
   dy: number;
-  /** Toque (C): dispara um dash. Só desloca: não empurra ninguém. */
+  /** Mira (vetor unitário) de quem joga com mouse ou toque; ausente = bot/teclado puro. */
+  fx?: number;
+  fy?: number;
+  /** A mira vem do mouse (precisa): o servidor não "puxa" o tiro pra perto de alguém. */
+  mouse?: boolean;
+  /**
+   * Tempo de simulação (s) que o jogador estava vendo quando mandou o input: os outros
+   * são desenhados ~110ms no passado. O servidor volta os alvos a esse instante pra
+   * decidir o tiro (compensação de lag), em vez de testar contra onde eles estão agora.
+   */
+  vt?: number;
+  /** Toque (Shift/Espaço): dispara um dash. Só desloca: não empurra ninguém. */
   dash: boolean;
-  /** Toque (Espaço): tiro com a arma na mão. Desarmado, pega a arma do chão. */
+  /** Toque (clique): tiro com a arma na mão. Desarmado, pega a arma do chão. */
   attack: boolean;
-  /** Toque (E): pega a arma do chão, larga a da mão ou troca uma pela outra. */
+  /** Toque (F): pega a arma do chão, larga a da mão ou troca uma pela outra. */
   grab: boolean;
 }
 
@@ -215,7 +228,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       if (!isFiniteNumber(msg.seq) || !isFiniteNumber(msg.dx) || !isFiniteNumber(msg.dy)) {
         return null;
       }
-      return {
+      const out: InputMessage = {
         t: 'input',
         seq: Math.max(0, Math.floor(msg.seq)),
         dx: clampUnit(msg.dx),
@@ -224,6 +237,14 @@ export function parseClientMessage(raw: string): ClientMessage | null {
         attack: msg.attack === true,
         grab: msg.grab === true,
       };
+      // Mira: só vale se vier completa e finita (o servidor normaliza).
+      if (isFiniteNumber(msg.fx) && isFiniteNumber(msg.fy)) {
+        out.fx = clampUnit(msg.fx);
+        out.fy = clampUnit(msg.fy);
+        if (msg.mouse === true) out.mouse = true;
+      }
+      if (isFiniteNumber(msg.vt) && msg.vt >= 0) out.vt = msg.vt;
+      return out;
     }
     case 'start':
     case 'addBot':

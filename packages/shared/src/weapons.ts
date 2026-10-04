@@ -31,8 +31,10 @@ export interface WeaponSpec {
   arc: number;
   /** Tempo entre tiros/rajadas (s). */
   cooldown: number;
-  /** Velocidade do arremesso da vítima (por bala, na rajada; no centro, na explosão). */
+  /** Velocidade do arremesso da vítima com 0% de dano (por bala, na rajada; no centro, na explosão). */
   impulse: number;
+  /** Dano (%) que cada acerto soma na vítima; o dano acumulado aumenta o empurrão. */
+  damage: number;
   /** Tempo que a vítima fica tonta (sem andar, sem dash, sem atirar). */
   stun: number;
   /** Golpes até quebrar (arma de fogo: munição; é descartada quando acaba). */
@@ -57,19 +59,20 @@ const deg = (d: number) => (d * Math.PI) / 180;
 /** Desgaste: quanto mais fraco cada uso, mais usos a arma aguenta. */
 export const WEAPONS: Record<WeaponKind, WeaponSpec> = {
   // Chumbo em leque: alcance curto e arremesso enorme.
-  // O rebote joga quem atirou pra trás, um pouco menos longe que a vítima.
+  // O rebote joga quem atirou um pouco pra trás (bem menos que a vítima).
   espingarda: {
     name: 'Espingarda',
-    hint: 'leque de chumbo: arremessa longe, mas o rebote te joga pra trás',
+    hint: 'leque de chumbo: arremessa longe; o rebote te empurra um pouco pra trás',
     style: 'spread',
     unit: ['bala', 'balas'],
     reach: 3.2,
     arc: deg(40),
-    cooldown: 1,
-    impulse: 24,
+    cooldown: 1.1,
+    impulse: 26,
+    damage: 14,
     stun: 0.5,
     uses: 3,
-    recoil: 16,
+    recoil: 7,
     speedMul: 0.95,
     swimMul: 1,
     weight: 3,
@@ -83,8 +86,9 @@ export const WEAPONS: Record<WeaponKind, WeaponSpec> = {
     unit: ['bala', 'balas'],
     reach: 7.5,
     arc: 0,
-    cooldown: 0.55,
-    impulse: 14,
+    cooldown: 1,
+    impulse: 15,
+    damage: 8,
     stun: 0.3,
     uses: 6,
     recoil: 0,
@@ -97,15 +101,16 @@ export const WEAPONS: Record<WeaponKind, WeaponSpec> = {
   // vai varrendo ela como um jato de mangueira. Cada bala tem um rebote leve.
   submetralhadora: {
     name: 'Submetralhadora',
-    hint: 'rajada de 6 balas fracas: a rajada inteira varre o alvo pra longe',
+    hint: 'rajada de 4 balas fracas: a rajada inteira empurra o alvo',
     style: 'burst',
     unit: ['bala', 'balas'],
     reach: 5,
     arc: 0,
-    cooldown: 0.6,
-    impulse: 5,
+    cooldown: 1.3,
+    impulse: 3.5,
+    damage: 3,
     stun: 0.12,
-    uses: 30,
+    uses: 20,
     recoil: 1.2,
     speedMul: 1,
     swimMul: 1,
@@ -121,8 +126,9 @@ export const WEAPONS: Record<WeaponKind, WeaponSpec> = {
     unit: ['foguete', 'foguetes'],
     reach: 9,
     arc: 0,
-    cooldown: 1.2,
-    impulse: 26,
+    cooldown: 1.4,
+    impulse: 28,
+    damage: 20,
     stun: 0.6,
     uses: 2,
     recoil: 6,
@@ -132,6 +138,22 @@ export const WEAPONS: Record<WeaponKind, WeaponSpec> = {
     color: 0xf2a03a,
   },
 };
+
+/**
+ * Dano percentual (estilo Smash): ninguém morre por vida, mas cada acerto soma "%" na
+ * vítima e, quanto mais ela acumula, mais longe os próximos acertos a jogam. Zera a cada rodada.
+ */
+export const DAMAGE = {
+  /** Cada 1% de dano aumenta o empurrão em 1% (100% = o dobro). */
+  knockbackPerPercent: 0.01,
+  /** Teto do acúmulo (empurrão máximo de 3×). */
+  max: 200,
+} as const;
+
+/** Multiplicador do empurrão pra quem já acumulou `damage`%. */
+export function knockbackMultiplier(damage: number): number {
+  return 1 + Math.min(DAMAGE.max, Math.max(0, damage)) * DAMAGE.knockbackPerPercent;
+}
 
 export const WEAPON_RULES = {
   /** Distância para pegar uma arma do chão com E. */
@@ -160,7 +182,7 @@ export const WEAPON_RULES = {
    */
   aimAssist: deg(18),
   /** Submetralhadora: balas por rajada, intervalo entre elas (s) e espalhamento (radianos). */
-  burstShots: 6,
+  burstShots: 4,
   burstInterval: 0.055,
   burstJitter: deg(7),
   /** Bazuca: velocidade do foguete (tiles/s). */

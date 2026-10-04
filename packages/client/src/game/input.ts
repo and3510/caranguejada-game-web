@@ -3,11 +3,11 @@
  * dash, tiro e pegar/largar são toques acumulados até o envio de rede/predição consumir.
  */
 export interface Actions {
-  /** C: dash (só desloca). */
+  /** Shift ou Espaço: dash (só desloca). */
   dash: boolean;
-  /** Espaço: tiro com a arma na mão (desarmado, pega a arma do chão). */
+  /** Clique (mouse) ou botão de atacar (toque): tiro; desarmado, pega a arma do chão. */
   attack: boolean;
-  /** R: pega, larga ou troca de arma. */
+  /** F: pega, larga ou troca de arma. */
   grab: boolean;
 }
 
@@ -23,9 +23,10 @@ const KEYMAP: Record<string, ActionName | Move> = {
   ArrowLeft: 'left',
   KeyD: 'right',
   ArrowRight: 'right',
-  KeyC: 'dash',
-  Space: 'attack',
-  KeyR: 'grab',
+  ShiftLeft: 'dash',
+  ShiftRight: 'dash',
+  Space: 'dash',
+  KeyF: 'grab',
 };
 
 const isAction = (a: string): a is ActionName => a === 'dash' || a === 'attack' || a === 'grab';
@@ -36,6 +37,12 @@ export class InputController {
   private readonly held = new Set<string>();
   private pending: Actions = noActions();
   private stick = { x: 0, y: 0 };
+
+  /** Posição do mouse na tela (começa no centro: sem isso o bicho olha pro canto). */
+  private mouse = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+
+  /** Pedidos de trocar a câmera de quem assiste (+1 próximo, -1 anterior); a cena consome. */
+  private spectate = 0;
   enabled = false;
   /** Tela de toque em uso (aparelho de toque, ou alguém já tocou na tela). */
   touchMode = false;
@@ -46,15 +53,63 @@ export class InputController {
     window.addEventListener('keydown', (e) => this.onKey(e, true));
     window.addEventListener('keyup', (e) => this.onKey(e, false));
     window.addEventListener('blur', () => this.held.clear());
+
+    // Atualiza a posição do mouse
+    window.addEventListener('mousemove', (e) => {
+      this.mouse.x = e.clientX;
+      this.mouse.y = e.clientY;
+    });
+    // Mouse de verdade (não o toque): quem tem os dois volta pra mira do mouse.
+    window.addEventListener(
+      'pointermove',
+      (e) => {
+        if (
+          e.pointerType === 'mouse' &&
+          this.touchMode &&
+          matchMedia('(any-pointer: fine)').matches
+        ) {
+          this.disableTouchMode();
+        }
+      },
+      { passive: true },
+    );
+
+    // Registra o clique do mouse (M1) para atacar
+    window.addEventListener('mousedown', (e) => {
+      const target = e.target as HTMLElement | null;
+      if (target?.tagName === 'INPUT' || target?.tagName === 'BUTTON' || this.touchMode) return;
+      if (!this.enabled) return;
+
+      // Botão esquerdo do mouse (0)
+      if (e.button === 0) {
+        this.pending.attack = true;
+        this.spectate++; // morto, o clique passa pro próximo jogador
+      }
+    });
+
     this.setupTouch();
+  }
+
+  /** Tab/E/→ passam pro próximo jogador; Q/← voltam. Só vale pra quem já caiu (a cena decide). */
+  consumeSpectate(): number {
+    const step = this.spectate;
+    this.spectate = 0;
+    return step;
   }
 
   private onKey(e: KeyboardEvent, down: boolean): void {
     const target = e.target as HTMLElement | null;
     if (target?.tagName === 'INPUT') return;
+    if (down && !e.repeat && this.enabled) {
+      if (e.code === 'Tab' || e.code === 'KeyE') this.spectate++;
+      else if (e.code === 'KeyQ') this.spectate--;
+      else if (e.code === 'ArrowRight') this.spectate++;
+      else if (e.code === 'ArrowLeft') this.spectate--;
+      if (e.code === 'Tab') e.preventDefault();
+    }
     const action = KEYMAP[e.code];
     if (!action || !this.enabled) return;
-    e.preventDefault();
+    if (e.code !== 'F5' && e.code !== 'F12') e.preventDefault(); // Permite F5/F12
     if (down) {
       if (!e.repeat && isAction(action)) this.pending[action] = true;
       this.held.add(action);
@@ -63,7 +118,6 @@ export class InputController {
     }
   }
 
-  /** Solta tudo (ex.: ao abrir o menu), para o caranguejo não sair andando sozinho. */
   release(): void {
     this.held.clear();
     this.pending = noActions();
@@ -80,12 +134,14 @@ export class InputController {
     return len > 1 ? { dx: dx / len, dy: dy / len } : { dx, dy };
   }
 
-  /** Lê sem consumir (para a predição local). */
+  aimPosition(): { x: number; y: number } {
+    return { x: this.mouse.x, y: this.mouse.y };
+  }
+
   peekActions(): Actions {
     return { ...this.pending };
   }
 
-  /** Algum toque esperando envio? (manda na hora em vez de esperar o próximo pacote) */
   hasPending(): boolean {
     return this.pending.dash || this.pending.attack || this.pending.grab;
   }
@@ -96,11 +152,14 @@ export class InputController {
     return out;
   }
 
-  /**
-   * Modo toque: liga se o aparelho for de toque, ou no primeiro toque na tela (tablet
-   * com teclado, navegador de celular em "modo desktop"). Marca o body com `.touch`
-   * para o CSS esconder o que é de teclado e mostrar os botões.
-   */
+  private disableTouchMode(): void {
+    this.touchMode = false;
+    document.body.classList.remove('touch');
+    const touchUi = document.getElementById('touch');
+    if (touchUi) touchUi.dataset.enabled = 'false';
+    this.onTouchMode();
+  }
+
   private enableTouchMode(): void {
     if (this.touchMode) return;
     this.touchMode = true;
@@ -125,8 +184,6 @@ export class InputController {
       { capture: true },
     );
 
-    // Direcional flutuante: o centro vai pra onde o dedo encostou na metade esquerda,
-    // então dá pra andar sem mirar num botão pequeno. Solto, ele volta pro canto.
     let pointerId: number | null = null;
     let center = { x: 0, y: 0 };
     const move = (e: PointerEvent) => {
@@ -159,7 +216,6 @@ export class InputController {
       zone.setPointerCapture(e.pointerId);
       const area = zone.getBoundingClientRect();
       const half = stick.offsetWidth / 2;
-      // Mantém o direcional inteiro dentro da área, mesmo tocando na beirada.
       const cx = Math.min(Math.max(e.clientX, area.left + half), area.right - half);
       const cy = Math.min(Math.max(e.clientY, area.top + half), area.bottom - half);
       center = { x: cx, y: cy };

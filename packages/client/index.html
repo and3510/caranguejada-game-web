@@ -87,15 +87,17 @@
               </li>
               <li><kbd>WASD</kbd> / setas: andar de lado (é caranguejo, né)</li>
               <li>
-                <kbd>C</kbd>: dash — dispara rápido para fugir da água ou de alguém (não empurra
-                ninguém)
+                <b>Mouse</b>: mira. <b>Clique</b>: atira (desarmado, pega a arma do chão). Com arma,
+                uma linha tracejada mostra o alcance. <b>Sem arma não dá pra atacar</b>, só fugir
               </li>
               <li>
-                <kbd>R</kbd> ou <kbd>Espaço</kbd>: desarmado, pega a arma do chão. <kbd>R</kbd>
-                também larga a sua ou troca por outra
+                <kbd>Shift</kbd> ou <kbd>Espaço</kbd>: dash — dispara rápido para fugir da água ou
+                de alguém (não empurra ninguém)
               </li>
+              <li><kbd>F</kbd>: pega a arma do chão, larga a sua ou troca por outra</li>
               <li>
-                <kbd>Espaço</kbd>: já armado, atira. <b>Sem arma não dá pra atacar</b>, só fugir
+                Caiu? A câmera segue outro jogador: <kbd>Tab</kbd>, <kbd>E</kbd>, <kbd>→</kbd> ou
+                clique passam pro próximo, <kbd>Q</kbd>/<kbd>←</kbd> voltam (ou use ◀ ▶)
               </li>
               <li><kbd>Esc</kbd>: menu (volume e sair da partida)</li>
               <li>
@@ -121,10 +123,10 @@
               </li>
               <li>
                 <b>Espingarda</b> (3 tiros): leque de chumbo de perto que arremessa longe, mas o
-                rebote te joga pra trás.
+                rebote te empurra um pouco pra trás.
               </li>
               <li>
-                <b>Submetralhadora</b> (30 balas): cada aperto solta uma rajada de 6 balas fracas; a
+                <b>Submetralhadora</b> (20 balas): cada aperto solta uma rajada de 4 balas fracas; a
                 rajada inteira na mesma pessoa varre ela pra longe.
               </li>
               <li>
@@ -198,6 +200,12 @@
       <ol id="scoreboard" class="scoreboard"></ol>
       <div id="toasts" class="toasts" aria-live="polite"></div>
       <div id="banner" class="banner hidden"></div>
+      <!-- Depois de cair: troca quem a câmera acompanha (Tab/E/Q, clique ou estes botões). -->
+      <div id="spectate" class="spectate hidden">
+        <button id="spectate-prev" class="spectate-btn" aria-label="Jogador anterior">◀</button>
+        <span id="spectate-name"></span>
+        <button id="spectate-next" class="spectate-btn" aria-label="Próximo jogador">▶</button>
+      </div>
       <div class="hud-bottom">
         <div class="hud-meters">
           <div id="weapon-slot" class="weapon-slot empty" aria-label="Arma na mão">
@@ -219,7 +227,8 @@
           </div>
         </div>
         <div class="keys keys-only">
-          WASD: andar · C: dash · espaço: tiro/pegar · R: pegar/largar arma · esc: menu
+          WASD: andar · mouse: mirar · clique: tiro/pegar · shift: dash · F: pegar/largar · esc:
+          menu
         </div>
       </div>
     </section>
