@@ -50,10 +50,20 @@ body {
 .screen {
   position: fixed;
   inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 16px;
+  /* Coluna + margem automática na placa: centraliza quando cabe e, quando não cabe,
+     começa do topo (com grid centralizado, o topo da placa ficava cortado). */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
   overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.screen > .board {
+  margin: auto 0;
+  flex: none;
 }
 
 .board {
@@ -366,9 +376,9 @@ kbd {
 
 .hud-top {
   position: absolute;
-  top: 10px;
-  left: 10px;
-  right: 10px;
+  top: max(10px, env(safe-area-inset-top));
+  left: max(10px, env(safe-area-inset-left));
+  right: max(10px, env(safe-area-inset-right));
   display: flex;
   align-items: center;
   gap: 10px;
@@ -439,8 +449,8 @@ kbd {
 
 .scoreboard {
   position: absolute;
-  top: 52px;
-  right: 10px;
+  top: calc(max(10px, env(safe-area-inset-top)) + 42px);
+  right: max(10px, env(safe-area-inset-right));
   margin: 0;
   padding: 6px 8px;
   list-style: none;
@@ -471,6 +481,14 @@ kbd {
   border: 2px solid var(--ink);
 }
 
+.scoreboard .star-num {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  font-family: var(--font-title);
+  font-size: 10px;
+}
+
 .scoreboard .pts {
   margin-left: auto;
   font-family: var(--font-title);
@@ -479,8 +497,8 @@ kbd {
 
 .toasts {
   position: absolute;
-  left: 10px;
-  top: 52px;
+  left: max(10px, env(safe-area-inset-left));
+  top: calc(max(10px, env(safe-area-inset-top)) + 42px);
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -527,9 +545,9 @@ kbd {
 
 .hud-bottom {
   position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: 10px;
+  left: max(10px, env(safe-area-inset-left));
+  right: max(10px, env(safe-area-inset-right));
+  bottom: max(10px, env(safe-area-inset-bottom));
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
@@ -658,63 +676,100 @@ kbd {
 
 /* ---------------------------------------------------------------- toque */
 
+/* Teclado x toque: o body ganha `.touch` no primeiro toque (ou em aparelho de toque). */
+.touch-only {
+  display: none;
+}
+
+body.touch .touch-only {
+  display: list-item;
+}
+
+body.touch .keys-only {
+  display: none !important;
+}
+
+/* No toque, os botões carregam a arma, a munição e as recargas: sem painéis embaixo. */
+body.touch .hud-bottom {
+  display: none;
+}
+
 #touch {
+  --stick: 120px;
+  --pad: 18px;
   position: fixed;
-  inset: auto 0 0 0;
-  height: 42vh;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  padding: 0 18px 60px;
+  inset: 0;
   pointer-events: none;
+  z-index: 2;
+}
+
+/* Metade esquerda inteira serve de direcional (menos o topo, onde fica o placar). */
+.stick-zone {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 50%;
+  height: 65%;
+  pointer-events: auto;
+  touch-action: none;
 }
 
 .stick {
-  position: relative;
-  width: 120px;
-  height: 120px;
-  border: 3px solid rgba(43, 29, 20, 0.7);
-  background: rgba(244, 239, 230, 0.25);
-  pointer-events: auto;
+  position: absolute;
+  left: max(var(--pad), env(safe-area-inset-left));
+  bottom: max(var(--pad), env(safe-area-inset-bottom));
+  width: var(--stick);
+  height: var(--stick);
+  border: 3px solid rgba(43, 29, 20, 0.55);
+  background: rgba(244, 239, 230, 0.18);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.stick.on {
+  opacity: 1;
+  background: rgba(244, 239, 230, 0.3);
 }
 
 #stick-knob {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 44px;
-  height: 44px;
-  margin: -22px 0 0 -22px;
+  width: calc(var(--stick) * 0.37);
+  height: calc(var(--stick) * 0.37);
+  margin: calc(var(--stick) * -0.185) 0 0 calc(var(--stick) * -0.185);
   background: var(--paper);
   border: 3px solid var(--ink);
 }
 
-.weapons-list li {
-  margin-bottom: 2px;
-}
-
+/* Botões no canto direito: ATACAR grande embaixo, DASH ao lado, LARGAR em cima. */
 .touch-buttons {
-  display: grid;
-  grid-template-columns: repeat(2, 64px);
-  gap: 10px;
-  pointer-events: auto;
+  --attack: 92px;
+  --small: 64px;
+  position: absolute;
+  right: max(var(--pad), env(safe-area-inset-right));
+  bottom: max(var(--pad), env(safe-area-inset-bottom));
+  width: calc(var(--attack) + var(--small) + 14px);
+  height: calc(var(--attack) + var(--small) * 0.7 + 12px);
 }
 
 .tbtn {
-  height: 56px;
+  position: absolute;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0;
   font-family: var(--font-title);
   font-size: 11px;
   color: var(--ink);
   background: var(--paper);
   border: 3px solid var(--ink);
   box-shadow: 3px 3px 0 var(--ink);
-}
-
-.tbtn-wide,
-.tbtn-big {
-  grid-column: span 2;
-  color: var(--foam);
-  background: var(--coral);
+  pointer-events: auto;
+  touch-action: none;
 }
 
 .tbtn.on {
@@ -722,27 +777,334 @@ kbd {
   box-shadow: none;
 }
 
+/* Recarga: uma sombra que desce conforme o botão volta a ficar pronto. */
+.tbtn-fill {
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 0;
+  background: rgba(43, 29, 20, 0.38);
+  pointer-events: none;
+}
+
+.tbtn-label,
+.tbtn-weapon {
+  position: relative;
+}
+
+.tbtn-attack {
+  right: 0;
+  bottom: 0;
+  width: var(--attack);
+  height: var(--attack);
+  color: var(--foam);
+  background: var(--coral);
+  font-size: 13px;
+}
+
+.tbtn-attack .tbtn-weapon {
+  display: none;
+  width: 54px;
+  height: 27px;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.tbtn-attack.armed .tbtn-weapon {
+  display: block;
+}
+
+.tbtn-attack.armed .tbtn-label {
+  font-size: 15px;
+}
+
+/* Desarmado com arma perto: o mesmo botão pega. */
+.tbtn-attack.pick {
+  color: var(--ink);
+  background: #ffe9a8;
+}
+
+.tbtn-attack.idle {
+  opacity: 0.55;
+}
+
+.tbtn-dash {
+  right: calc(var(--attack) + 12px);
+  bottom: 0;
+  width: var(--small);
+  height: var(--small);
+}
+
+.tbtn-dash:not(.cooling) {
+  background: #ffe9a8;
+}
+
+.tbtn-grab {
+  right: calc((var(--attack) - var(--small)) / 2);
+  bottom: calc(var(--attack) + 12px);
+  width: var(--small);
+  height: calc(var(--small) * 0.7);
+}
+
+.weapons-list li {
+  margin-bottom: 2px;
+}
+
 @media (pointer: coarse) {
   .keys {
     display: none;
   }
-  /* No celular o espaço é dos botões: a dica da arma fica só no "Como jogar". */
-  #weapon-hint {
+}
+
+/* ---------------------------------------------------------------- telas pequenas */
+
+/* HUD compacta: celular (em pé ou deitado). Os painéis encolhem e saem do caminho. */
+@media (max-height: 520px), (max-width: 700px) {
+  #hud {
+    font-size: 13px;
+  }
+  .hud-top {
+    gap: 6px;
+  }
+  .chip {
+    padding: 3px 6px;
+    font-size: 10px;
+  }
+  .hud-map,
+  .tide-word {
     display: none;
   }
-  .hud-meters {
-    flex-direction: row;
-    align-items: flex-end;
+  .tide {
+    padding: 3px 6px;
+    gap: 6px;
+  }
+  .tide-bar {
+    width: 56px;
+    height: 8px;
+  }
+  #tide-label {
+    font-size: 10px;
+  }
+  /* Placar vira uma fileira de pílulas: cor, estrela e pontos (o nome já está no bichinho). */
+  .scoreboard {
+    top: calc(max(10px, env(safe-area-inset-top)) + 30px);
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 4px;
+    max-width: 50vw;
+    min-width: 0;
+    padding: 0;
+    background: none;
+    border: none;
+    box-shadow: none;
+  }
+  .scoreboard li {
+    gap: 4px;
+    padding: 2px 5px;
+    font-size: 11px;
+    background: rgba(242, 223, 180, 0.92);
+    border: 2px solid var(--ink);
+  }
+  .scoreboard li.me {
+    background: #ffe9a8;
+  }
+  .scoreboard .name,
+  .scoreboard .stars {
+    display: none;
+  }
+  .scoreboard .star-num {
+    display: flex;
+  }
+  .scoreboard .star-num .star {
+    width: 10px;
+    height: 10px;
+  }
+  .scoreboard .pts {
+    margin-left: 0;
+    font-size: 10px;
+  }
+  .swatch {
+    width: 8px;
+    height: 8px;
+  }
+  /* Avisos: só os 2 mais novos, menores. */
+  .toasts {
+    top: calc(max(10px, env(safe-area-inset-top)) + 30px);
+    max-width: 46vw;
+  }
+  .toast {
+    padding: 2px 6px;
+    font-size: 12px;
+  }
+  .toast:nth-child(n + 3) {
+    display: none;
+  }
+  .banner {
+    top: 30%;
+    padding: 8px 14px;
+    font-size: clamp(18px, 6vh, 28px);
+  }
+  .banner small {
+    font-size: 13px;
   }
 }
 
-@media (max-width: 560px) {
-  .tide-bar {
-    width: 60px;
+/* Celular deitado (pouca altura): controles de toque menores. */
+@media (max-height: 430px) {
+  #touch {
+    --stick: 104px;
+    --pad: 12px;
   }
-  .scoreboard {
-    min-width: 120px;
-    font-size: 12px;
+  .touch-buttons {
+    --attack: 80px;
+    --small: 56px;
+  }
+}
+
+/* Celular deitado: placas em duas colunas pra caber sem rolar. */
+@media (max-height: 560px) and (min-width: 600px) {
+  .board {
+    padding: 16px 20px 12px;
+  }
+  .menu-board {
+    display: grid;
+    grid-template-columns: 1fr 1.15fr;
+    column-gap: 26px;
+    align-items: center;
+    width: min(780px, 100%);
+  }
+  #title-crab {
+    width: 44px;
+    height: 44px;
+  }
+  h1 {
+    font-size: 26px;
+  }
+  .tagline {
+    margin: 4px 0 14px;
+    font-size: 14px;
+  }
+  .field {
+    margin-bottom: 10px;
+  }
+  input {
+    padding: 7px 10px;
+    font-size: 18px;
+  }
+  .btn {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+  .actions {
+    margin-bottom: 8px;
+  }
+  .maps-field {
+    margin-bottom: 10px;
+  }
+  .error {
+    margin-top: 6px;
+  }
+  .howto {
+    margin-top: 8px;
+    padding-top: 6px;
+  }
+  h2 {
+    margin-bottom: 8px;
+    font-size: 18px;
+  }
+  /* Sala com resultado: ranking à esquerda, sala (bots, rodadas, começar) à direita. */
+  .lobby-board {
+    width: min(820px, 100%);
+  }
+  .lobby-board.with-results {
+    display: grid;
+    grid-template-columns: 1fr 1.1fr;
+    column-gap: 24px;
+    align-items: start;
+  }
+  .lobby-board.with-results .results {
+    margin: 0;
+    padding: 0 24px 0 0;
+    border-bottom: none;
+    border-right: 3px solid var(--ink);
+  }
+  .results li {
+    font-size: 15px;
+  }
+  .results li:first-child {
+    font-size: 17px;
+  }
+  .results canvas {
+    width: 24px;
+    height: 24px;
+  }
+  .summary-board {
+    width: min(560px, 100%);
+  }
+  /* Muita gente (5+): duas colunas, só com a contagem de estrelas. */
+  .summary-list:has(li:nth-child(5)) {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    column-gap: 16px;
+  }
+  .summary-list:has(li:nth-child(5)) .stars {
+    display: none;
+  }
+  .summary-list:has(li:nth-child(5)) .star-count {
+    margin-left: auto;
+  }
+  .summary-list li {
+    padding: 2px 0;
+  }
+  .summary-list li canvas.crab {
+    width: 24px;
+    height: 24px;
+  }
+  .summary-next {
+    margin-top: 6px;
+  }
+  /* Botões da sala numa linha baixa: bots pequenos, "começar" ocupa o resto. */
+  .room-panel .actions .btn-small {
+    flex: none;
+  }
+  .room-panel .actions .btn-primary {
+    flex: 1;
+    white-space: nowrap;
+  }
+  .roster + .players,
+  .room-panel .rounds-field {
+    margin-bottom: 8px;
+  }
+  .link {
+    margin-top: 6px;
+  }
+}
+
+/* Lista da sala em etiquetas (cabe mais em pouco espaço): tela baixa ou estreita. */
+@media (max-height: 560px), (max-width: 480px) {
+  .roster {
+    margin-top: 8px;
+  }
+  .players {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 6px;
+    margin: 4px 0 10px;
+  }
+  .players li {
+    gap: 4px;
+    padding: 2px 6px 2px 2px;
+    font-size: 13px;
+    border: 2px solid rgba(43, 29, 20, 0.35);
+  }
+  .players canvas {
+    width: 20px;
+    height: 20px;
+  }
+  .players .tag {
+    margin-left: 2px;
+    font-size: 8px;
+    padding: 1px 3px;
   }
 }
 

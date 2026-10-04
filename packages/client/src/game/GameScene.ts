@@ -59,6 +59,8 @@ export interface FrameInfo {
   uses: number;
   /** 0..1: recarga do tiro. */
   attackReady: number;
+  /** Arma do chão ao alcance (o botão de toque vira "pegar"/"trocar"). */
+  nearWeapon: WeaponKind | null;
 }
 
 interface CrabView {
@@ -266,6 +268,7 @@ export class GameScene extends Phaser.Scene {
       weapon,
       uses: mine?.uses ?? 0,
       attackReady,
+      nearWeapon: this.nearestWeapon()?.kind ?? null,
     });
   }
 

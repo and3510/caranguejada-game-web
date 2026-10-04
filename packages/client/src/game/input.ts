@@ -37,6 +37,10 @@ export class InputController {
   private pending: Actions = noActions();
   private stick = { x: 0, y: 0 };
   enabled = false;
+  /** Tela de toque em uso (aparelho de toque, ou alguém já tocou na tela). */
+  touchMode = false;
+  /** Avisado quando o modo toque liga (a UI se redesenha). */
+  onTouchMode: () => void = () => {};
 
   constructor() {
     window.addEventListener('keydown', (e) => this.onKey(e, true));
@@ -92,20 +96,43 @@ export class InputController {
     return out;
   }
 
+  /**
+   * Modo toque: liga se o aparelho for de toque, ou no primeiro toque na tela (tablet
+   * com teclado, navegador de celular em "modo desktop"). Marca o body com `.touch`
+   * para o CSS esconder o que é de teclado e mostrar os botões.
+   */
+  private enableTouchMode(): void {
+    if (this.touchMode) return;
+    this.touchMode = true;
+    document.body.classList.add('touch');
+    const touchUi = document.getElementById('touch');
+    if (touchUi) touchUi.dataset.enabled = 'true';
+    this.onTouchMode();
+  }
+
   private setupTouch(): void {
     const touchUi = document.getElementById('touch');
+    const zone = document.getElementById('stick-zone');
     const stick = document.getElementById('stick');
     const knob = document.getElementById('stick-knob');
-    if (!touchUi || !stick || !knob) return;
-    if (!matchMedia('(pointer: coarse)').matches) return;
-    touchUi.dataset.enabled = 'true';
+    if (!touchUi || !zone || !stick || !knob) return;
+    if (matchMedia('(pointer: coarse)').matches) this.enableTouchMode();
+    window.addEventListener(
+      'pointerdown',
+      (e) => {
+        if (e.pointerType === 'touch') this.enableTouchMode();
+      },
+      { capture: true },
+    );
 
+    // Direcional flutuante: o centro vai pra onde o dedo encostou na metade esquerda,
+    // então dá pra andar sem mirar num botão pequeno. Solto, ele volta pro canto.
     let pointerId: number | null = null;
+    let center = { x: 0, y: 0 };
     const move = (e: PointerEvent) => {
-      const rect = stick.getBoundingClientRect();
-      const max = rect.width / 2;
-      let x = e.clientX - (rect.left + max);
-      let y = e.clientY - (rect.top + max);
+      const max = stick.offsetWidth / 2;
+      let x = e.clientX - center.x;
+      let y = e.clientY - center.y;
       const len = Math.hypot(x, y);
       if (len > max) {
         x = (x / len) * max;
@@ -115,21 +142,38 @@ export class InputController {
       const dead = len < max * 0.2;
       this.stick = dead ? { x: 0, y: 0 } : { x: x / max, y: y / max };
     };
-    const release = () => {
+    const release = (e: PointerEvent) => {
+      if (e.pointerId !== pointerId) return;
       pointerId = null;
       this.stick = { x: 0, y: 0 };
       knob.style.transform = '';
+      stick.style.left = '';
+      stick.style.top = '';
+      stick.style.bottom = '';
+      stick.classList.remove('on');
     };
-    stick.addEventListener('pointerdown', (e) => {
+    zone.addEventListener('pointerdown', (e) => {
+      if (pointerId !== null) return;
+      e.preventDefault();
       pointerId = e.pointerId;
-      stick.setPointerCapture(e.pointerId);
+      zone.setPointerCapture(e.pointerId);
+      const area = zone.getBoundingClientRect();
+      const half = stick.offsetWidth / 2;
+      // Mantém o direcional inteiro dentro da área, mesmo tocando na beirada.
+      const cx = Math.min(Math.max(e.clientX, area.left + half), area.right - half);
+      const cy = Math.min(Math.max(e.clientY, area.top + half), area.bottom - half);
+      center = { x: cx, y: cy };
+      stick.style.left = `${cx - area.left - half}px`;
+      stick.style.top = `${cy - area.top - half}px`;
+      stick.style.bottom = 'auto';
+      stick.classList.add('on');
       move(e);
     });
-    stick.addEventListener('pointermove', (e) => {
+    zone.addEventListener('pointermove', (e) => {
       if (e.pointerId === pointerId) move(e);
     });
-    stick.addEventListener('pointerup', release);
-    stick.addEventListener('pointercancel', release);
+    zone.addEventListener('pointerup', release);
+    zone.addEventListener('pointercancel', release);
 
     touchUi.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((btn) => {
       const action = btn.dataset.action ?? '';

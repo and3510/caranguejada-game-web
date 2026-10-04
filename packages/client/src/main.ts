@@ -22,6 +22,10 @@ import { Ui, renderMapsPicker, renderRoundsPicker, toggleMap } from './ui/ui';
 const store = new Store();
 const ui = new Ui();
 const input = new InputController();
+// Primeiro toque num aparelho que parecia de teclado: aparece o controle de toque.
+input.onTouchMode = () => {
+  if (conn) ui.render(store);
+};
 const sfx = new Sfx();
 let conn: Connection | null = null;
 

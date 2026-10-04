@@ -155,8 +155,10 @@ export class Ui {
 
   private bannerTimer = 0;
   private lastCountdown = -1;
-  /** Evita mexer no DOM do slot da arma a cada quadro. */
+  /** Evita mexer no DOM do slot da arma, da maré e dos botões de toque a cada quadro. */
   private weaponSlotKey = '';
+  private tideKey = '';
+  private touchKey = '';
 
   constructor() {
     const title = $<HTMLCanvasElement>('title-crab');
@@ -186,19 +188,25 @@ export class Ui {
     this.menu.classList.add('hidden');
     this.lobby.classList.toggle('hidden', !inLobby);
     this.hud.classList.toggle('hidden', inLobby);
+    // Controles de toque só enquanto dá pra jogar: na contagem e no fim de rodada só poluem.
     const touchEnabled = this.touch.dataset.enabled === 'true';
-    this.touch.classList.toggle('hidden', inLobby || !touchEnabled);
+    this.touch.classList.toggle('hidden', store.phase !== 'playing' || !touchEnabled);
     if (inLobby) this.renderLobby(store);
     else this.renderScoreboard(store);
     const extra = store.round - store.totalRounds;
-    const roundLabel =
+    $('hud-round-label').textContent =
       extra > 0 ? `desempate ${extra}` : `rodada ${store.round}/${store.totalRounds}`;
-    $('hud-round').textContent = `${roundLabel} · ${MAP_NAMES[store.mapKind]}`;
+    // O nome do mapa some em tela pequena (CSS): o número da rodada é o que importa.
+    $('hud-map').textContent = ` · ${MAP_NAMES[store.mapKind]}`;
   }
 
   private renderLobby(store: Store): void {
     $('room-code').textContent = store.code;
     $('results').classList.toggle('hidden', store.phase !== 'matchEnd');
+    // Com o resultado na tela, em celular deitado a placa vira duas colunas (CSS).
+    this.lobby
+      .querySelector('.lobby-board')!
+      .classList.toggle('with-results', store.phase === 'matchEnd');
     const me = store.player(store.you);
     const isHost = me?.host === true;
     $('host-controls').classList.toggle('hidden', !isHost);
@@ -275,7 +283,8 @@ export class Ui {
     const alive = new Set(
       [...(store.latest()?.crabs.values() ?? [])].filter((c) => c.alive).map((c) => c.id),
     );
-    const sorted = [...store.players].sort((a, b) => b.score - a.score);
+    // Mesma ordem do resultado final: estrelas primeiro, pontos desempatam.
+    const sorted = [...store.players].sort((a, b) => b.stars - a.stars || b.score - a.score);
     $('scoreboard').replaceChildren(
       ...sorted.map((p) => {
         const li = document.createElement('li');
@@ -285,11 +294,17 @@ export class Ui {
         sw.className = 'swatch';
         sw.style.background = hex(p.color);
         const name = document.createElement('span');
+        name.className = 'name';
         name.textContent = p.name;
+        // Versão compacta (tela pequena): uma estrela e o número, no lugar da fileira.
+        const starNum = document.createElement('span');
+        starNum.className = 'star-num';
+        if (p.stars > 0) starNum.append(starIcon(), String(p.stars));
         const pts = document.createElement('span');
         pts.className = 'pts';
         pts.textContent = String(p.score);
-        li.append(sw, name, starRow(p.stars), pts);
+        li.title = p.name;
+        li.append(sw, name, starRow(p.stars), starNum, pts);
         return li;
       }),
     );
@@ -343,13 +358,22 @@ export class Ui {
     const flooding = isFlooding(roundTime) && store.phase === 'playing';
     tide.classList.toggle('flood', flooding);
     const landPct = Math.max(0, Math.round(land * 100));
-    $('tide-label').textContent = flooding ? `ENCHENTE! ilha: ${landPct}%` : `ilha: ${landPct}%`;
+    const tideKey = `${flooding}:${landPct}`;
+    if (tideKey !== this.tideKey) {
+      this.tideKey = tideKey;
+      // "ilha:" some em tela pequena (CSS); o aviso de enchente e o número ficam.
+      const word = document.createElement('span');
+      word.className = 'tide-word';
+      word.textContent = 'ilha: ';
+      $('tide-label').replaceChildren(...(flooding ? ['ENCHENTE! '] : []), word, `${landPct}%`);
+    }
 
     $('dash-fill').style.width = `${Math.round(Math.max(0, Math.min(1, dashReady)) * 100)}%`;
     $('dash-fill')
       .closest('.dash-meter')!
       .classList.toggle('ready', dashReady >= 1);
     this.renderWeaponSlot(info);
+    if (this.touch.dataset.enabled === 'true') this.renderTouchButtons(info);
 
     if (store.phase === 'countdown') {
       const left = Math.ceil((store.countdownEndsAt - performance.now()) / 1000);
@@ -373,6 +397,48 @@ export class Ui {
       }
       this.lastCountdown = -1;
     }
+  }
+
+  /**
+   * Botões de toque carregam a informação dos painéis (que somem no celular):
+   * ATACAR mostra a arma, a munição e a recarga; DASH, a recarga; o terceiro botão
+   * só aparece armado (largar, ou trocar se houver outra arma perto).
+   */
+  private renderTouchButtons({
+    weapon,
+    uses,
+    attackReady,
+    dashReady,
+    nearWeapon,
+  }: FrameInfo): void {
+    const pct = (ready: number) => `${Math.round((1 - Math.max(0, Math.min(1, ready))) * 100)}%`;
+    $('tbtn-dash-fill').style.height = pct(dashReady);
+    $('tbtn-dash').classList.toggle('cooling', dashReady < 1);
+    $('tbtn-attack-fill').style.height = weapon ? pct(attackReady) : '0%';
+
+    const key = `${weapon ?? '-'}:${uses}:${nearWeapon ?? '-'}`;
+    if (key === this.touchKey) return;
+    const kindChanged = this.touchKey.split(':')[0] !== (weapon ?? '-');
+    this.touchKey = key;
+    const attack = $('tbtn-attack');
+    attack.classList.toggle('armed', weapon !== null);
+    attack.classList.toggle('pick', !weapon && nearWeapon !== null);
+    attack.classList.toggle('idle', !weapon && nearWeapon === null);
+    if (kindChanged) {
+      const icon = weapon ? weaponCanvas(weapon) : document.createElement('canvas');
+      icon.id = 'tbtn-weapon';
+      icon.className = 'tbtn-weapon';
+      icon.setAttribute('aria-hidden', 'true');
+      $('tbtn-weapon').replaceWith(icon);
+    }
+    $('tbtn-attack-label').textContent = weapon ? String(uses) : nearWeapon ? 'pegar' : 'sem arma';
+    attack.setAttribute(
+      'aria-label',
+      weapon ? `atirar (${uses} de munição)` : nearWeapon ? 'pegar a arma' : 'sem arma',
+    );
+    const grab = $('tbtn-grab');
+    grab.classList.toggle('hidden', !weapon);
+    grab.textContent = nearWeapon ? 'trocar' : 'largar';
   }
 
   /** Slot da arma: ícone, nome, munição, recarga e o que ela faz de especial. */
