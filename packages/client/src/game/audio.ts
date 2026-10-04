@@ -1,3 +1,5 @@
+import type { WeaponKind } from '@caranguejada/shared';
+
 /**
  * Efeitos sonoros sintetizados na hora (WebAudio): zero arquivos de áudio,
  * timbre próprio e carregamento instantâneo.
@@ -82,15 +84,69 @@ export class Sfx {
     this.hiss(0.12, 0.4, 1100);
   }
 
+  /** Golpe no ar (cada arma corta o vento de um jeito) ou estampido do tiro. */
+  swing(kind: WeaponKind): void {
+    switch (kind) {
+      case 'espingarda':
+        // Estrondo grave e longo, com o chumbo chiando.
+        this.hiss(0.45, 0.7, 600);
+        this.hiss(0.2, 0.5, 2500);
+        this.tone('square', 140, 35, 0.35, 0.6);
+        break;
+      case 'revolver':
+        // Estalo seco e agudo.
+        this.hiss(0.18, 0.6, 1800);
+        this.tone('square', 520, 90, 0.12, 0.45);
+        break;
+      case 'submetralhadora':
+        // Cada bala da rajada: estalo curtinho (seis seguidos viram o "ra-ta-ta").
+        this.hiss(0.05, 0.4, 2200);
+        this.tone('square', 700, 200, 0.04, 0.25);
+        break;
+      case 'bazuca':
+        // Lançamento: "fuuu" do foguete saindo do tubo.
+        this.hiss(0.45, 0.45, 1200);
+        this.tone('sawtooth', 160, 420, 0.4, 0.2);
+        break;
+    }
+  }
+
+  /** Explosão do foguete: estrondo grave e longo. */
+  boom(): void {
+    this.hiss(0.5, 0.9, 300);
+    this.hiss(0.3, 0.5, 1400);
+    this.tone('square', 110, 25, 0.5, 0.7);
+  }
+
+  /** Acerto: a pancada de sempre, com o timbre da arma por cima. */
+  hit(kind: WeaponKind): void {
+    // Bala da rajada: tapinha leve (o som forte já é o do tiro).
+    if (kind === 'submetralhadora') {
+      this.tone('square', 260, 90, 0.05, 0.25);
+      return;
+    }
+    this.shove();
+  }
+
+  pickup(): void {
+    this.tone('square', 660, 660, 0.05, 0.15);
+    this.tone('square', 990, 990, 0.08, 0.15, 0.05);
+  }
+
+  drop(): void {
+    this.tone('square', 440, 300, 0.08, 0.12);
+  }
+
+  /** Arma de fogo sem munição: o "clique" do gatilho vazio. */
+  click(): void {
+    this.tone('square', 1800, 1700, 0.025, 0.2);
+    this.tone('square', 1200, 1100, 0.03, 0.15, 0.06);
+  }
+
   /** Dash: "fuuf" de vento subindo. */
   dash(): void {
     this.hiss(0.16, 0.22, 1800);
     this.tone('triangle', 200, 520, 0.12, 0.18);
-  }
-
-  shell(gold: boolean): void {
-    this.tone('square', 880, 880, 0.06, 0.18);
-    this.tone('square', gold ? 1568 : 1320, gold ? 1568 : 1320, 0.1, 0.18, 0.06);
   }
 
   splash(): void {

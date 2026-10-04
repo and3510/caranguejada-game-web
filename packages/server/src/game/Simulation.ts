@@ -3,27 +3,37 @@ import {
   EROSION,
   ROUND_HARD_LIMIT_SECONDS,
   SCORE,
-  SHELLS,
+  WEAPONS,
+  WEAPON_RULES,
+  assistAim,
   createBody,
   createRng,
   depthAt,
   generateTerrain,
   heightAt,
+  inStrikeZone,
+  isFlooding,
+  pickWeaponKind,
   stepBody,
   tideLevel,
+  weaponMoveMods,
   type Body,
   type CrabSnapshot,
   type FxEvent,
   type Rng,
-  type ShellSnapshot,
+  type RocketSnapshot,
   type Terrain,
+  type WeaponItemSnapshot,
+  type WeaponKind,
 } from '@caranguejada/shared';
 
 export interface CrabInput {
   dx: number;
   dy: number;
-  /** Toque: fica pendente até o próximo tick consumir. */
+  /** Toques: ficam pendentes até o próximo tick consumir. */
   dash: boolean;
+  attack: boolean;
+  grab: boolean;
   seq: number;
 }
 
@@ -32,19 +42,41 @@ export interface Crab extends Body {
   alive: boolean;
   breath: number;
   dashCooldown: number;
+  /** Arma na mão; desarmado não atira. */
+  weapon: WeaponKind | null;
+  uses: number;
+  attackCooldown: number;
+  /** Rajada da submetralhadora: balas que faltam, tempo até a próxima e direção. */
+  burst: { left: number; timer: number; dx: number; dy: number };
   lastShovedBy: string | null;
   lastShovedAt: number;
+  lastHitWeapon: WeaponKind | null;
   diedAt: number;
   input: CrabInput;
   /** Tempo de simulação em que o input atual chegou. */
   inputAt: number;
 }
 
-export interface Shell {
+/** Foguete da bazuca: voa em linha reta e explode ao tocar alguém ou no fim do alcance. */
+export interface Rocket {
   id: number;
   x: number;
   y: number;
-  gold: boolean;
+  dx: number;
+  dy: number;
+  traveled: number;
+  owner: string;
+}
+
+export interface WeaponItem {
+  id: number;
+  x: number;
+  y: number;
+  kind: WeaponKind;
+  /** Arma largada guarda o desgaste: não dá pra "recarregar" largando e pegando. */
+  uses: number;
+  /** Há quanto tempo está boiando (s); zera quando volta a ficar em terra seca. */
+  afloat: number;
 }
 
 /** Eventos de pontuação que a sala aplica ao placar da partida. */
@@ -55,29 +87,31 @@ export interface StepResult {
   scores: ScoreEvent[];
 }
 
-export interface RoundResult {
-  winner: string | null;
-  /** Os últimos afundaram juntos e o vencedor saiu pelos pontos da rodada. */
-  byPoints: boolean;
-}
-
-const emptyInput = (): CrabInput => ({ dx: 0, dy: 0, dash: false, seq: 0 });
+const emptyInput = (): CrabInput => ({
+  dx: 0,
+  dy: 0,
+  dash: false,
+  attack: false,
+  grab: false,
+  seq: 0,
+});
 
 /**
- * Uma rodada: terreno, enchente, caranguejos e conchas. Não sabe nada de rede,
+ * Uma rodada: terreno, enchente, caranguejos e armas. Não sabe nada de rede,
  * o que permite testar todas as regras de forma determinística.
  */
 export class Simulation {
   readonly terrain: Terrain;
   readonly crabs = new Map<string, Crab>();
-  readonly shells: Shell[] = [];
+  readonly weapons: WeaponItem[] = [];
+  readonly rockets: Rocket[] = [];
   time = 0;
 
   private readonly rng: Rng;
   private readonly starters: number;
-  private nextShellId = 1;
-  /** Pontos feitos nesta rodada (critério de desempate). */
-  readonly roundPoints = new Map<string, number>();
+  private nextWeaponId = 1;
+  private nextRocketId = 1;
+  private weaponTimer = 0;
   private erosionTimer = 0;
   private readonly dirtyTiles = new Set<number>();
 
@@ -98,14 +132,21 @@ export class Simulation {
         alive: true,
         breath: 1,
         dashCooldown: 0,
+        weapon: null,
+        uses: 0,
+        attackCooldown: 0,
+        burst: { left: 0, timer: 0, dx: 0, dy: 0 },
         lastShovedBy: null,
         lastShovedAt: -Infinity,
+        lastHitWeapon: null,
         diedAt: Infinity,
         input: emptyInput(),
         inputAt: 0,
       });
     });
-    for (let i = 0; i < SHELLS.initial; i++) this.trySpawnShell(tideLevel(0), Infinity);
+    // Todo mundo começa desarmado: as primeiras armas já estão no mapa, e a corrida
+    // até elas é o primeiro conflito da rodada.
+    for (let i = 0; i < this.weaponCap(playerIds.length); i++) this.trySpawnWeapon(tideLevel(0));
   }
 
   get level(): number {
@@ -151,7 +192,7 @@ export class Simulation {
     return chosen;
   }
 
-  setInput(id: string, input: Omit<CrabInput, 'dash'> & Partial<CrabInput>) {
+  setInput(id: string, input: Omit<CrabInput, 'dash' | 'attack' | 'grab'> & Partial<CrabInput>) {
     const crab = this.crabs.get(id);
     if (!crab) return;
     const prev = crab.input;
@@ -160,17 +201,28 @@ export class Simulation {
       dx: input.dx,
       dy: input.dy,
       seq: input.seq,
-      // Bote acumula até o tick consumir, para não perder um toque rápido.
+      // Toques acumulam até o tick consumir, para não perder um aperto rápido.
       dash: prev.dash || input.dash === true,
+      attack: prev.attack || input.attack === true,
+      grab: prev.grab || input.grab === true,
     };
   }
 
-  /** Jogador saiu da sala no meio da rodada. */
+  /** Coloca uma arma nova na mão (testes e ferramentas). */
+  giveWeapon(id: string, kind: WeaponKind): void {
+    const crab = this.crabs.get(id);
+    if (!crab) return;
+    crab.weapon = kind;
+    crab.uses = WEAPONS[kind].uses;
+  }
+
+  /** Jogador saiu da sala no meio da rodada: a arma fica no chão para os outros. */
   removeCrab(id: string): void {
     const crab = this.crabs.get(id);
     if (crab && crab.alive) {
       crab.alive = false;
       crab.diedAt = this.time;
+      this.dropWeapon(crab);
     }
   }
 
@@ -181,11 +233,14 @@ export class Simulation {
     for (const crab of this.crabs.values()) {
       if (!crab.alive) continue;
       crab.dashCooldown = Math.max(0, crab.dashCooldown - dt);
+      crab.attackCooldown = Math.max(0, crab.attackCooldown - dt);
       this.applyActions(crab, result);
-      stepBody(crab, crab.input, this.terrain, level, dt);
+      this.advanceBurst(crab, dt, result);
+      stepBody(crab, crab.input, this.terrain, level, dt, weaponMoveMods(crab.weapon));
     }
 
-    this.resolveCollisions(result);
+    this.resolveCollisions();
+    this.advanceRockets(dt, result);
 
     for (const crab of this.crabs.values()) {
       if (!crab.alive) continue;
@@ -198,31 +253,374 @@ export class Simulation {
       this.erode(level);
     }
 
-    this.collectShells(result);
-    this.washAwayShells(level);
-    if (this.rng() < SHELLS.spawnPerSecond * dt) this.trySpawnShell(level, SHELLS.beachBand);
-
-    for (const s of result.scores) {
-      this.roundPoints.set(s.playerId, (this.roundPoints.get(s.playerId) ?? 0) + s.points);
+    this.washAwayWeapons(level, dt);
+    this.weaponTimer += dt;
+    const spawnEvery = isFlooding(this.time)
+      ? WEAPON_RULES.floodSpawnEverySeconds
+      : WEAPON_RULES.spawnEverySeconds;
+    if (this.weaponTimer >= spawnEvery) {
+      this.weaponTimer = 0;
+      if (this.weapons.length < this.weaponCap(this.aliveIds().length)) this.trySpawnWeapon(level);
     }
+
     this.time += dt;
     return result;
   }
 
   private applyActions(crab: Crab, result: StepResult): void {
     const { input } = crab;
-    if (input.dash && crab.dashCooldown <= 0 && crab.stunT <= 0) {
-      // O bote sai na direção pressionada agora, não na última olhada.
-      const len = Math.hypot(input.dx, input.dy);
-      if (len > 0.01) {
-        crab.fx = input.dx / len;
-        crab.fy = input.dy / len;
-      }
+    const free = crab.stunT <= 0;
+    // Desarmado, o Espaço também pega a arma do chão (R continua servindo pra isso,
+    // e é o único jeito de largar ou trocar por outra enquanto já se está armado).
+    const wasUnarmed = !crab.weapon;
+    if ((input.grab || (input.attack && wasUnarmed)) && free) this.grabOrDrop(crab, result);
+    if (input.dash && free && crab.dashCooldown <= 0) {
+      this.aim(crab);
       crab.dashT = CRAB.dashSeconds;
       crab.dashCooldown = CRAB.dashCooldown;
       result.fx.push({ kind: 'dash', x: crab.x, y: crab.y, by: crab.id });
     }
+    // Já armado, o Espaço ataca em vez de pegar (nesse caso passou pelo bloco acima).
+    if (input.attack && free && !wasUnarmed && crab.weapon && crab.attackCooldown <= 0) {
+      this.startAttack(crab, crab.weapon, result);
+    }
     input.dash = false;
+    input.attack = false;
+    input.grab = false;
+  }
+
+  /** Dash e tiro saem na direção pressionada agora, não na última olhada. */
+  private aim(crab: Crab): void {
+    const len = Math.hypot(crab.input.dx, crab.input.dy);
+    if (len > 0.01) {
+      crab.fx = crab.input.dx / len;
+      crab.fy = crab.input.dy / len;
+    }
+  }
+
+  /** Armas no chão ao mesmo tempo: acompanha quantos ainda estão vivos. */
+  private weaponCap(alive: number): number {
+    return Math.min(WEAPON_RULES.maxOnGround, Math.max(2, Math.ceil(alive / 2) + 1));
+  }
+
+  // ------------------------------------------------------------------ armas
+
+  /** E: pega a arma mais perto; com uma na mão, larga (ou troca pela do chão). */
+  private grabOrDrop(crab: Crab, result: StepResult): void {
+    let near: WeaponItem | undefined;
+    let nearDist: number = WEAPON_RULES.pickupRadius;
+    for (const item of this.weapons) {
+      const d = Math.hypot(item.x - crab.x, item.y - crab.y);
+      if (d <= nearDist) {
+        near = item;
+        nearDist = d;
+      }
+    }
+    if (crab.weapon) {
+      const kind = crab.weapon;
+      this.dropWeapon(crab);
+      result.fx.push({ kind: 'drop', x: crab.x, y: crab.y, by: crab.id, weapon: kind });
+    }
+    if (!near) return;
+    this.weapons.splice(this.weapons.indexOf(near), 1);
+    crab.weapon = near.kind;
+    crab.uses = near.uses;
+    result.fx.push({ kind: 'pickup', x: near.x, y: near.y, by: crab.id, weapon: near.kind });
+  }
+
+  private dropWeapon(crab: Crab): void {
+    if (!crab.weapon) return;
+    if (crab.uses > 0) {
+      this.weapons.push({
+        id: this.nextWeaponId++,
+        x: crab.x,
+        y: crab.y,
+        kind: crab.weapon,
+        uses: crab.uses,
+        afloat: 0,
+      });
+    }
+    crab.weapon = null;
+    crab.uses = 0;
+    crab.burst.left = 0;
+  }
+
+  private startAttack(crab: Crab, kind: WeaponKind, result: StepResult): void {
+    const spec = WEAPONS[kind];
+    this.aim(crab);
+    const others = [...this.crabs.values()].filter((c) => c.alive && c !== crab);
+    const aim = assistAim(kind, crab, { x: crab.fx, y: crab.fy }, others, CRAB.radius);
+    crab.fx = aim.x;
+    crab.fy = aim.y;
+    crab.attackCooldown = spec.cooldown;
+    if (spec.style === 'burst') {
+      // A primeira bala sai agora; as outras, uma por vez (advanceBurst).
+      crab.burst = { left: WEAPON_RULES.burstShots, timer: 0, dx: crab.fx, dy: crab.fy };
+      this.advanceBurst(crab, 0, result);
+      return;
+    }
+    crab.uses--;
+    if (spec.style === 'rocket') this.launchRocket(crab, result);
+    else this.fire(crab, kind, crab.fx, crab.fy, result);
+    this.recoil(crab, crab.fx, crab.fy, spec.recoil);
+    this.breakIfWorn(crab, result);
+  }
+
+  /** Rebote: quem atira vai pra trás (acertando ou não). Cuidado com a água às costas. */
+  private recoil(crab: Crab, dx: number, dy: number, amount: number): void {
+    if (amount <= 0) return;
+    crab.kx -= dx * amount;
+    crab.ky -= dy * amount;
+    crab.dashT = 0;
+  }
+
+  /** Tiro instantâneo numa direção: acerta quem estiver na zona da arma. */
+  private fire(crab: Crab, kind: WeaponKind, dx: number, dy: number, result: StepResult): void {
+    const spec = WEAPONS[kind];
+    const targets = this.targetsInZone(crab, kind, dx, dy);
+    const isBullet = spec.style === 'bullet' || spec.style === 'burst';
+    // Tiro: o cliente desenha a bala até onde ela parou (no alvo, ou no fim do alcance).
+    const shotLength = isBullet && targets[0] ? targets[0].dist : spec.reach;
+    result.fx.push({
+      kind: 'swing',
+      x: crab.x,
+      y: crab.y,
+      by: crab.id,
+      weapon: kind,
+      dx,
+      dy,
+      value: Math.round(shotLength * 100) / 100,
+    });
+    for (const t of targets) this.hit(crab, t.victim, kind, t.nx, t.ny, t.dist, dx, dy, result);
+  }
+
+  /** Submetralhadora: solta as balas da rajada no ritmo certo, cada uma um pouco torta. */
+  private advanceBurst(crab: Crab, dt: number, result: StepResult): void {
+    const b = crab.burst;
+    if (b.left <= 0) return;
+    // Tonto não segura a arma: o resto da rajada se perde.
+    if (crab.weapon !== 'submetralhadora' || crab.stunT > 0) {
+      b.left = 0;
+      return;
+    }
+    b.timer -= dt;
+    while (b.left > 0 && b.timer <= 0 && crab.uses > 0) {
+      const jitter = (this.rng() * 2 - 1) * WEAPON_RULES.burstJitter;
+      const a = Math.atan2(b.dy, b.dx) + jitter;
+      const dx = Math.cos(a);
+      const dy = Math.sin(a);
+      this.fire(crab, 'submetralhadora', dx, dy, result);
+      this.recoil(crab, dx, dy, WEAPONS.submetralhadora.recoil);
+      crab.uses--;
+      b.left--;
+      b.timer += WEAPON_RULES.burstInterval;
+    }
+    if (b.left === 0 || crab.uses <= 0) {
+      b.left = 0;
+      this.breakIfWorn(crab, result);
+    }
+  }
+
+  private launchRocket(crab: Crab, result: StepResult): void {
+    const start = CRAB.radius + 0.35;
+    this.rockets.push({
+      id: this.nextRocketId++,
+      x: crab.x + crab.fx * start,
+      y: crab.y + crab.fy * start,
+      dx: crab.fx,
+      dy: crab.fy,
+      traveled: start,
+      owner: crab.id,
+    });
+    result.fx.push({
+      kind: 'swing',
+      x: crab.x,
+      y: crab.y,
+      by: crab.id,
+      weapon: 'bazuca',
+      dx: crab.fx,
+      dy: crab.fy,
+    });
+  }
+
+  /** Foguetes voam por cima de tudo e explodem ao tocar alguém ou no fim do alcance. */
+  private advanceRockets(dt: number, result: StepResult): void {
+    const step = (WEAPON_RULES.rocketSpeed * dt) / 2;
+    const hitDist = WEAPON_RULES.rocketHitRadius + CRAB.radius;
+    for (let i = this.rockets.length - 1; i >= 0; i--) {
+      const r = this.rockets[i]!;
+      let boom = false;
+      // Dois subpassos por tick: o foguete não "pula" por cima de ninguém.
+      for (let sub = 0; sub < 2 && !boom; sub++) {
+        r.x += r.dx * step;
+        r.y += r.dy * step;
+        r.traveled += step;
+        const outside = r.x < 0 || r.y < 0 || r.x > this.terrain.width || r.y > this.terrain.height;
+        const touched = [...this.crabs.values()].some(
+          (c) => c.alive && c.id !== r.owner && Math.hypot(c.x - r.x, c.y - r.y) <= hitDist,
+        );
+        boom = outside || touched || r.traveled >= WEAPONS.bazuca.reach;
+      }
+      if (!boom) continue;
+      this.rockets.splice(i, 1);
+      this.explode(r, result);
+    }
+  }
+
+  /**
+   * Explosão: empurra todo mundo no raio para longe do centro (inclusive quem atirou)
+   * e abre uma cratera no chão.
+   */
+  private explode(r: Rocket, result: StepResult): void {
+    const spec = WEAPONS.bazuca;
+    result.fx.push({ kind: 'boom', x: r.x, y: r.y, by: r.owner, weapon: 'bazuca' });
+    for (const crab of this.crabs.values()) {
+      if (!crab.alive) continue;
+      const d = Math.hypot(crab.x - r.x, crab.y - r.y);
+      if (d > WEAPON_RULES.blastRadius + CRAB.radius) continue;
+      const nx = d > 1e-3 ? (crab.x - r.x) / d : r.dx;
+      const ny = d > 1e-3 ? (crab.y - r.y) / d : r.dy;
+      const impulse = spec.impulse * (1 - 0.5 * Math.min(1, d / WEAPON_RULES.blastRadius));
+      crab.kx = nx * impulse;
+      crab.ky = ny * impulse;
+      crab.stunT = Math.max(crab.stunT, spec.stun);
+      crab.dashT = 0;
+      // Quem se explode sozinho não credita ponto pra ninguém (nem pra si).
+      if (crab.id !== r.owner) {
+        crab.lastShovedBy = r.owner;
+        crab.lastShovedAt = this.time;
+        crab.lastHitWeapon = 'bazuca';
+      }
+      result.fx.push({
+        kind: 'hit',
+        x: crab.x,
+        y: crab.y,
+        by: r.owner,
+        target: crab.id,
+        weapon: 'bazuca',
+        dx: nx,
+        dy: ny,
+      });
+    }
+    this.crater(r.x, r.y);
+  }
+
+  /**
+   * Cratera: destrói o bloco atingido e os 8 em volta (o do centro afunda mais).
+   * A maré ocupa o buraco.
+   */
+  private crater(x: number, y: number): void {
+    const cx = Math.floor(x);
+    const cy = Math.floor(y);
+    for (let ty = cy - 1; ty <= cy + 1; ty++) {
+      for (let tx = cx - 1; tx <= cx + 1; tx++) {
+        if (tx < 0 || ty < 0 || tx >= this.terrain.width || ty >= this.terrain.height) continue;
+        const i = ty * this.terrain.width + tx;
+        const h = this.terrain.heights[i] ?? 0;
+        if (h === 0) continue;
+        const center = tx === cx && ty === cy;
+        const depth = center ? WEAPON_RULES.craterCenterDepth : WEAPON_RULES.craterRingDepth;
+        this.terrain.heights[i] = Math.max(0, h - depth);
+        this.dirtyTiles.add(i);
+      }
+    }
+  }
+
+  private breakIfWorn(crab: Crab, result: StepResult): void {
+    if (!crab.weapon || crab.uses > 0) return;
+    result.fx.push({ kind: 'break', x: crab.x, y: crab.y, by: crab.id, weapon: crab.weapon });
+    crab.weapon = null;
+    crab.uses = 0;
+    crab.burst.left = 0;
+  }
+
+  /**
+   * Quem o tiro na direção (dx, dy) pega: todo mundo no leque (espingarda); a bala
+   * (revólver, submetralhadora) para no primeiro da linha.
+   */
+  private targetsInZone(
+    attacker: Crab,
+    kind: WeaponKind,
+    aimX: number,
+    aimY: number,
+  ): { victim: Crab; nx: number; ny: number; dist: number }[] {
+    const out: { victim: Crab; nx: number; ny: number; dist: number }[] = [];
+    for (const victim of this.crabs.values()) {
+      if (victim === attacker || !victim.alive) continue;
+      let dx = victim.x - attacker.x;
+      let dy = victim.y - attacker.y;
+      let dist = Math.hypot(dx, dy);
+      if (dist < 1e-4) {
+        dx = aimX;
+        dy = aimY;
+        dist = 1e-4;
+      }
+      const nx = dx / Math.hypot(dx, dy);
+      const ny = dy / Math.hypot(dx, dy);
+      const angle = Math.atan2(aimX * ny - aimY * nx, aimX * nx + aimY * ny);
+      if (inStrikeZone(kind, dist, angle, CRAB.radius)) out.push({ victim, nx, ny, dist });
+    }
+    const style = WEAPONS[kind].style;
+    if (style !== 'bullet' && style !== 'burst') return out;
+    out.sort((a, b) => a.dist - b.dist);
+    return out.slice(0, 1);
+  }
+
+  private hit(
+    attacker: Crab,
+    victim: Crab,
+    kind: WeaponKind,
+    nx: number,
+    ny: number,
+    dist: number,
+    aimX: number,
+    aimY: number,
+    result: StepResult,
+  ): void {
+    const spec = WEAPONS[kind];
+    let impulse = spec.impulse;
+    if (spec.style === 'spread') {
+      // Chumbo espalha: de perto empurra mais que no limite do alcance.
+      impulse *= 1 - WEAPON_RULES.spreadFalloff * Math.min(1, dist / spec.reach);
+    }
+    let px: number;
+    let py: number;
+    if (spec.style === 'bullet' || spec.style === 'burst') {
+      // A bala empurra na direção do tiro.
+      px = aimX;
+      py = aimY;
+    } else {
+      // Chumbo: voa na direção do tiro, com um pouco do ângulo do contato.
+      px = aimX * 0.65 + nx * 0.35;
+      py = aimY * 0.65 + ny * 0.35;
+      const len = Math.hypot(px, py) || 1;
+      px /= len;
+      py /= len;
+    }
+
+    if (spec.style === 'burst') {
+      // Rajada soma: cada bala empurra um pouco mais quem já está voando.
+      victim.kx += px * impulse;
+      victim.ky += py * impulse;
+    } else {
+      victim.kx = px * impulse;
+      victim.ky = py * impulse;
+    }
+    victim.stunT = Math.max(victim.stunT, spec.stun);
+    victim.dashT = 0;
+    victim.lastShovedBy = attacker.id;
+    victim.lastShovedAt = this.time;
+    victim.lastHitWeapon = kind;
+    result.fx.push({
+      kind: 'hit',
+      x: (attacker.x + victim.x) / 2,
+      y: (attacker.y + victim.y) / 2,
+      by: attacker.id,
+      target: victim.id,
+      weapon: kind,
+      dx: px,
+      dy: py,
+    });
   }
 
   private erode(level: number): void {
@@ -241,7 +639,8 @@ export class Simulation {
     }
   }
 
-  private resolveCollisions(result: StepResult): void {
+  /** Corpo não atravessa corpo. Dash só desloca: esbarrar não empurra ninguém. */
+  private resolveCollisions(): void {
     const alive = [...this.crabs.values()].filter((c) => c.alive);
     const minDist = CRAB.radius * 2;
     for (let i = 0; i < alive.length; i++) {
@@ -251,8 +650,7 @@ export class Simulation {
         let dx = b.x - a.x;
         let dy = b.y - a.y;
         let dist = Math.hypot(dx, dy);
-        const anyDashing = a.dashT > 0 || b.dashT > 0;
-        if (dist >= (anyDashing ? CRAB.shoveReach : minDist)) continue;
+        if (dist >= minDist) continue;
         if (dist < 1e-4) {
           dx = 1;
           dy = 0;
@@ -260,47 +658,13 @@ export class Simulation {
         }
         const nx = dx / dist;
         const ny = dy / dist;
-
-        if (a.dashT > 0) this.shove(a, b, nx, ny, result);
-        if (b.dashT > 0) this.shove(b, a, -nx, -ny, result);
-
-        // Separação simples para ninguém atravessar ninguém.
-        if (dist < minDist) {
-          const overlap = (minDist - dist) / 2;
-          a.x -= nx * overlap;
-          a.y -= ny * overlap;
-          b.x += nx * overlap;
-          b.y += ny * overlap;
-        }
+        const overlap = (minDist - Math.min(dist, minDist)) / 2;
+        a.x -= nx * overlap;
+        a.y -= ny * overlap;
+        b.x += nx * overlap;
+        b.y += ny * overlap;
       }
     }
-  }
-
-  private shove(attacker: Crab, victim: Crab, nx: number, ny: number, result: StepResult): void {
-    // A vítima voa na direção do bote (com um pouco do ângulo do contato): mira importa.
-    let px = attacker.fx * 0.65 + nx * 0.35;
-    let py = attacker.fy * 0.65 + ny * 0.35;
-    const len = Math.hypot(px, py) || 1;
-    px /= len;
-    py /= len;
-
-    attacker.dashT = 0;
-    victim.kx = px * CRAB.shoveImpulse;
-    victim.ky = py * CRAB.shoveImpulse;
-    victim.stunT = CRAB.stunSeconds;
-    victim.dashT = 0;
-    victim.lastShovedBy = attacker.id;
-    victim.lastShovedAt = this.time;
-    // Recuo leve: empurrar também desequilibra.
-    attacker.kx -= px * CRAB.shoveImpulse * 0.15;
-    attacker.ky -= py * CRAB.shoveImpulse * 0.15;
-    result.fx.push({
-      kind: 'shove',
-      x: (attacker.x + victim.x) / 2,
-      y: (attacker.y + victim.y) / 2,
-      by: attacker.id,
-      target: victim.id,
-    });
   }
 
   private updateBreath(crab: Crab, level: number, dt: number, result: StepResult): void {
@@ -315,6 +679,9 @@ export class Simulation {
 
     crab.alive = false;
     crab.diedAt = this.time;
+    // A arma afunda junto.
+    crab.weapon = null;
+    crab.uses = 0;
     const shover =
       crab.lastShovedBy !== null && this.time - crab.lastShovedAt <= SCORE.fatalShoveWindow
         ? crab.lastShovedBy
@@ -327,45 +694,67 @@ export class Simulation {
       x: crab.x,
       y: crab.y,
       target: crab.id,
-      ...(shover ? { by: shover, value: SCORE.fatalShove } : {}),
+      ...(shover
+        ? {
+            by: shover,
+            value: SCORE.fatalShove,
+            ...(crab.lastHitWeapon ? { weapon: crab.lastHitWeapon } : {}),
+          }
+        : {}),
     });
   }
 
-  private collectShells(result: StepResult): void {
-    for (const crab of this.crabs.values()) {
-      if (!crab.alive) continue;
-      for (let i = this.shells.length - 1; i >= 0; i--) {
-        const shell = this.shells[i]!;
-        if (Math.hypot(shell.x - crab.x, shell.y - crab.y) > SHELLS.pickupRadius) continue;
-        const points = shell.gold ? SCORE.goldShell : SCORE.shell;
-        this.shells.splice(i, 1);
-        result.scores.push({ playerId: crab.id, points });
-        result.fx.push({ kind: 'shell', x: shell.x, y: shell.y, by: crab.id, value: points });
+  /** Arma na água boia um tempo (dá pra pegar nadando) e depois o mar leva. */
+  private washAwayWeapons(level: number, dt: number): void {
+    for (let i = this.weapons.length - 1; i >= 0; i--) {
+      const w = this.weapons[i]!;
+      if (depthAt(this.terrain, w.x, w.y, level) <= 0) {
+        w.afloat = 0;
+        continue;
       }
+      w.afloat += dt;
+      if (w.afloat >= WEAPON_RULES.floatSeconds) this.weapons.splice(i, 1);
     }
   }
 
-  /** Concha que ficou no fundo é levada pelo mar: não vale a pena (nem dá) mergulhar atrás. */
-  private washAwayShells(level: number): void {
-    for (let i = this.shells.length - 1; i >= 0; i--) {
-      const s = this.shells[i]!;
-      if (depthAt(this.terrain, s.x, s.y, level) >= CRAB.deepWater) this.shells.splice(i, 1);
-    }
-  }
-
-  /** Conchas aparecem na praia logo acima da água: recompensa quem se arrisca na beira. */
-  private trySpawnShell(level: number, band: number): void {
-    if (this.shells.length >= SHELLS.max) return;
-    for (let attempt = 0; attempt < 30; attempt++) {
-      const tx = Math.floor(this.rng() * this.terrain.width);
-      const ty = Math.floor(this.rng() * this.terrain.height);
-      const h = heightAt(this.terrain, tx, ty);
-      if (h < level || h >= level + band) continue;
-      this.shells.push({
-        id: this.nextShellId++,
-        x: tx + 0.2 + this.rng() * 0.6,
-        y: ty + 0.2 + this.rng() * 0.6,
-        gold: this.rng() < SHELLS.goldChance,
+  /**
+   * Onde nasce arma nova, em ordem de preferência:
+   * 1. terra alta e longe de quem está vivo (pegar uma exige sair do lugar);
+   * 2. qualquer terra seca, quando a ilha já encolheu;
+   * 3. boiando na água perto de quem ainda está vivo, no fim da enchente:
+   *    sempre dá pra se armar e jogar alguém pro fundo.
+   */
+  private trySpawnWeapon(level: number): void {
+    const alive = [...this.crabs.values()].filter((c) => c.alive);
+    const clear = (x: number, y: number, fromCrabs: number, fromWeapons: number) =>
+      alive.every((c) => Math.hypot(c.x - x, c.y - y) >= fromCrabs) &&
+      this.weapons.every((w) => Math.hypot(w.x - x, w.y - y) >= fromWeapons);
+    const tiers: ((x: number, y: number, h: number) => boolean)[] = [
+      (x, y, h) => h >= level + WEAPON_RULES.spawnMinHeightAboveWater && clear(x, y, 2, 3),
+      (x, y, h) => h >= level && clear(x, y, 1, 1.5),
+      (x, y, h) =>
+        h < level &&
+        clear(x, y, 1, 1.5) &&
+        alive.some((c) => Math.hypot(c.x - x, c.y - y) <= WEAPON_RULES.floatSpawnNear),
+    ];
+    for (const fits of tiers) {
+      const spots: { x: number; y: number }[] = [];
+      for (let ty = 0; ty < this.terrain.height; ty++) {
+        for (let tx = 0; tx < this.terrain.width; tx++) {
+          const x = tx + 0.5;
+          const y = ty + 0.5;
+          if (fits(x, y, heightAt(this.terrain, tx, ty))) spots.push({ x, y });
+        }
+      }
+      if (spots.length === 0) continue;
+      const spot = spots[Math.floor(this.rng() * spots.length)]!;
+      const kind = pickWeaponKind(this.rng());
+      this.weapons.push({
+        id: this.nextWeaponId++,
+        ...spot,
+        kind,
+        uses: WEAPONS[kind].uses,
+        afloat: 0,
       });
       return;
     }
@@ -386,29 +775,18 @@ export class Simulation {
    * Quem vence a rodada:
    * 1. o último sobrevivente;
    * 2. se todos afundaram, quem afundou por último;
-   * 3. se os últimos afundaram no mesmo instante, quem fez mais pontos na rodada;
-   * 4. empate também nos pontos: ninguém vence.
+   * 3. se os últimos afundaram no mesmo instante, é empate: ninguém leva a rodada.
    */
-  roundResult(): RoundResult {
-    const none: RoundResult = { winner: null, byPoints: false };
-    if (this.starters < 2) return none;
+  winner(): string | null {
+    if (this.starters < 2) return null;
     const alive = this.aliveIds();
-    if (alive.length === 1) return { winner: alive[0]!, byPoints: false };
-    if (alive.length > 1) return none;
+    if (alive.length === 1) return alive[0]!;
+    if (alive.length > 1) return null;
 
     const crabs = [...this.crabs.values()];
     const lastDeath = Math.max(...crabs.map((c) => c.diedAt));
     const last = crabs.filter((c) => c.diedAt === lastDeath);
-    if (last.length === 1) return { winner: last[0]!.id, byPoints: false };
-
-    const points = (id: string) => this.roundPoints.get(id) ?? 0;
-    const best = Math.max(...last.map((c) => points(c.id)));
-    const leaders = last.filter((c) => points(c.id) === best);
-    return leaders.length === 1 ? { winner: leaders[0]!.id, byPoints: true } : none;
-  }
-
-  winner(): string | null {
-    return this.roundResult().winner;
+    return last.length === 1 ? last[0]!.id : null;
   }
 
   drainDirtyTiles(): [number, number][] {
@@ -430,17 +808,27 @@ export class Simulation {
       breath: r(c.breath),
       dashing: c.dashT > 0,
       stunned: c.stunT > 0,
+      weapon: c.weapon,
+      uses: c.uses,
       ack: c.input.seq,
       ackAge: r(this.time - c.inputAt),
     }));
   }
 
-  shellSnapshots(): ShellSnapshot[] {
-    return this.shells.map((s) => ({
-      id: s.id,
-      x: Math.round(s.x * 100) / 100,
-      y: Math.round(s.y * 100) / 100,
-      gold: s.gold,
+  weaponSnapshots(): WeaponItemSnapshot[] {
+    const r = (v: number) => Math.round(v * 100) / 100;
+    return this.weapons.map((w) => ({
+      id: w.id,
+      x: r(w.x),
+      y: r(w.y),
+      kind: w.kind,
+      uses: w.uses,
+      afloat: r(w.afloat),
     }));
+  }
+
+  rocketSnapshots(): RocketSnapshot[] {
+    const r = (v: number) => Math.round(v * 100) / 100;
+    return this.rockets.map((k) => ({ id: k.id, x: r(k.x), y: r(k.y), dx: r(k.dx), dy: r(k.dy) }));
   }
 }

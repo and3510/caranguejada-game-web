@@ -3,5 +3,6 @@ export * from './rng';
 export * from './terrain';
 export * from './tide';
 export * from './physics';
+export * from './weapons';
 export * from './protocol';
 export * from './roomCode';

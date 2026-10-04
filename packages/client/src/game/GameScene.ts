@@ -3,29 +3,37 @@ import {
   CLIENT_INPUT_RATE,
   CRAB,
   CRAB_COLORS,
+  WEAPONS,
+  WEAPON_KINDS,
+  WEAPON_RULES,
+  assistAim,
   createBody,
   createRng,
   depthAt,
   heightAt,
+  inStrikeZone,
   stepBody,
   tideLevel,
+  weaponMoveMods,
   type Body,
   type CrabSnapshot,
   type FxEvent,
   type InputMessage,
   type MapKind,
   type Terrain,
+  type WeaponKind,
 } from '@caranguejada/shared';
 import { attractTerrain, type Store } from '../state';
 import type { Sfx } from './audio';
 import type { InputController } from './input';
 import {
   CRAB_FRAMES,
-  GOLD_SHELL_PALETTE,
-  SHELL_ART,
-  SHELL_PALETTE,
+  ROCKET_ART,
+  WEAPON_GRIP,
+  WEAPON_PALETTE,
   crabCanvas,
   pixelArtCanvas,
+  weaponCanvas,
 } from './sprites';
 import { TILE, TerrainRenderer } from './terrainRenderer';
 
@@ -45,6 +53,12 @@ export interface FrameInfo {
   dashReady: number;
   /** 0..1: fração da ilha original que ainda está seca. */
   land: number;
+  /** Arma na mão (null = desarmado: só anda e dá dash). */
+  weapon: WeaponKind | null;
+  /** Golpes que a arma ainda aguenta. */
+  uses: number;
+  /** 0..1: recarga do tiro. */
+  attackReady: number;
 }
 
 interface CrabView {
@@ -60,11 +74,33 @@ interface CrabView {
   flashUntil: number;
   nextGhostAt: number;
   wasDashing: boolean;
+  /** Arma na mão, desenhada ao lado do caranguejo. */
+  weapon: Phaser.GameObjects.Image | null;
+  weaponKind: WeaponKind | null;
+  /** Início do coice do último tiro (performance.now). */
+  swingAt: number;
+}
+
+/**
+ * Rastro do tiro: fica parado onde saiu (o rebote leva o atirador, mas a bala não
+ * vai junto). Origem e alcance em tiles.
+ */
+interface Shot {
+  kind: WeaponKind;
+  x: number;
+  y: number;
+  fx: number;
+  fy: number;
+  length: number;
+  start: number;
 }
 
 interface LocalCrab {
   body: Body;
   dashCooldown: number;
+  attackCooldown: number;
+  /** Rajada da submetralhadora desenhada na hora (o servidor confirma os acertos). */
+  burst: { left: number; timer: number; dx: number; dy: number };
   seq: number;
   sendTimer: number;
   sentAt: Map<number, number>;
@@ -81,6 +117,7 @@ interface CrabRender {
   breath: number;
   dashing: boolean;
   stunned: boolean;
+  weapon: WeaponKind | null;
   color: number;
   name: string;
 }
@@ -89,7 +126,17 @@ interface CrabRender {
 const INTERP_DELAY_MS = 110;
 const SEND_INTERVAL = 1 / CLIENT_INPUT_RATE;
 const MIN_SEND_INTERVAL = 1 / 30;
-const SHOVE_WORDS = ['PÁ!', 'TUM!', 'POF!', 'CRAU!', 'TOMA!'];
+const HIT_WORDS: Record<WeaponKind, readonly string[]> = {
+  espingarda: ['BUM!', 'KABUM!', 'POW!'],
+  revolver: ['BANG!', 'PEI!', 'PÁ!'],
+  submetralhadora: ['TA-TA!', 'RA-TA-TA!', 'TÁ!'],
+  bazuca: ['BUUM!', 'KABUM!', 'CABRUM!'],
+};
+/** Duração do rastro do tiro (clarão, bala, chumbo). */
+const SHOT_MS = 280;
+/** Duração do coice da arma na mão. */
+const SWING_MS = 220;
+const isTouch = () => matchMedia('(pointer: coarse)').matches;
 
 const crabKey = (color: number, frame: number) => `crab-${color.toString(16)}-${frame}`;
 
@@ -98,7 +145,17 @@ export class GameScene extends Phaser.Scene {
   private terrainTexture!: Phaser.Textures.CanvasTexture;
   private overlay!: Phaser.GameObjects.Graphics;
   private readonly crabViews = new Map<string, CrabView>();
-  private readonly shellViews = new Map<number, Phaser.GameObjects.Image>();
+  private readonly weaponViews = new Map<number, Phaser.GameObjects.Image>();
+  private readonly shots: Shot[] = [];
+  /** Foguetes da bazuca em voo. */
+  private readonly rocketViews = new Map<
+    number,
+    { img: Phaser.GameObjects.Image; smokeAt: number }
+  >();
+  /** Caranguejos como estão na tela (a mira do tiro local usa essas posições). */
+  private lastCrabs: CrabRender[] = [];
+  /** "R: pegar Bazuca" em cima da arma mais perto. */
+  private prompt!: Phaser.GameObjects.Text;
 
   private local: LocalCrab | null = null;
   private seenRoundId = -1;
@@ -125,14 +182,26 @@ export class GameScene extends Phaser.Scene {
         this.textures.addCanvas(crabKey(color, f), crabCanvas(color, f)),
       );
     }
-    this.textures.addCanvas('shell', pixelArtCanvas(SHELL_ART, SHELL_PALETTE));
-    this.textures.addCanvas('shell-gold', pixelArtCanvas(SHELL_ART, GOLD_SHELL_PALETTE));
+    for (const kind of WEAPON_KINDS) this.textures.addCanvas(`weapon-${kind}`, weaponCanvas(kind));
+    this.textures.addCanvas('rocket', pixelArtCanvas(ROCKET_ART, WEAPON_PALETTE));
 
     const { width, height } = this.demo.terrain;
     this.terrainRenderer = new TerrainRenderer(width, height);
     this.terrainTexture = this.textures.addCanvas('terrain', this.terrainRenderer.canvas)!;
     this.add.image(0, 0, 'terrain').setOrigin(0).setDepth(-1000);
     this.overlay = this.add.graphics().setDepth(10_000);
+    this.prompt = this.add
+      .text(0, 0, '', {
+        fontFamily: 'Silkscreen',
+        fontSize: '8px',
+        color: '#ffe9a8',
+        stroke: '#2b1d14',
+        strokeThickness: 2,
+        resolution: this.textResolution(),
+      })
+      .setOrigin(0.5, 1)
+      .setDepth(9_900)
+      .setVisible(false);
 
     this.setupDemo();
   }
@@ -171,17 +240,33 @@ export class GameScene extends Phaser.Scene {
     if (store.phase === 'playing') this.predictLocal(dt, terrain, level);
 
     const crabs = this.collectCrabs(now);
+    this.lastCrabs = crabs;
     this.renderCrabs(crabs, terrain, level, dt);
-    this.renderShells();
+    this.renderWeaponItems(terrain, level);
+    this.renderRockets(now);
     this.drawOverlay(crabs, terrain, level);
+    this.updatePrompt();
     this.updateCamera(crabs, terrain, dt);
 
     if (now >= this.land.nextAt) {
       this.land.nextAt = now + 250;
       this.land.current = this.countLand(terrain, level) / this.land.initial;
     }
-    const dashReady = this.local ? 1 - this.local.dashCooldown / CRAB.dashCooldown : 1;
-    this.deps.onFrame({ level, roundTime, dashReady, land: this.land.current });
+    const local = this.local;
+    const mine = latest?.crabs.get(store.you);
+    const weapon = local && mine?.alive ? mine.weapon : null;
+    const dashReady = local ? 1 - local.dashCooldown / CRAB.dashCooldown : 1;
+    const attackReady =
+      local && weapon ? 1 - local.attackCooldown / WEAPONS[weapon].cooldown : weapon ? 1 : 0;
+    this.deps.onFrame({
+      level,
+      roundTime,
+      dashReady,
+      land: this.land.current,
+      weapon,
+      uses: mine?.uses ?? 0,
+      attackReady,
+    });
   }
 
   private onNewRound(terrain: Terrain): void {
@@ -194,8 +279,10 @@ export class GameScene extends Phaser.Scene {
       current: 1,
       nextAt: 0,
     };
-    for (const v of this.shellViews.values()) v.destroy();
-    this.shellViews.clear();
+    for (const v of this.weaponViews.values()) v.destroy();
+    this.weaponViews.clear();
+    this.shots.length = 0;
+    this.clearRockets();
     this.clearDemoCrabs();
   }
 
@@ -224,6 +311,8 @@ export class GameScene extends Phaser.Scene {
       this.local = {
         body: { ...createBody(server.x, server.y), fx: server.fx, fy: server.fy },
         dashCooldown: 0,
+        attackCooldown: 0,
+        burst: { left: 0, timer: 0, dx: 0, dy: 0 },
         seq: 0,
         sendTimer: 0,
         sentAt: new Map(),
@@ -234,19 +323,49 @@ export class GameScene extends Phaser.Scene {
     const dir = input.direction();
     const actions = input.peekActions();
 
-    local.dashCooldown = Math.max(0, local.dashCooldown - dt);
-    if (actions.dash && local.dashCooldown <= 0 && local.body.stunT <= 0) {
+    const body = local.body;
+    const aim = () => {
       const len = Math.hypot(dir.dx, dir.dy);
       if (len > 0.01) {
-        local.body.fx = dir.dx / len;
-        local.body.fy = dir.dy / len;
+        body.fx = dir.dx / len;
+        body.fy = dir.dy / len;
       }
-      local.body.dashT = CRAB.dashSeconds;
+    };
+    local.dashCooldown = Math.max(0, local.dashCooldown - dt);
+    local.attackCooldown = Math.max(0, local.attackCooldown - dt);
+    const free = body.stunT <= 0;
+    if (actions.dash && free && local.dashCooldown <= 0) {
+      aim();
+      body.dashT = CRAB.dashSeconds;
       local.dashCooldown = CRAB.dashCooldown;
-      // Efeito na hora, sem esperar o servidor: o bote tem que "sair da mão".
-      this.dashStartFx(store.you, local.body.x, local.body.y, local.body.fx, local.body.fy);
+      // Efeito na hora, sem esperar o servidor: o dash tem que "sair da mão".
+      this.dashStartFx(store.you, body.x, body.y, body.fx, body.fy);
     }
-    stepBody(local.body, dir, terrain, level, dt);
+    const weapon = server.weapon;
+    if (actions.attack && free && weapon && local.attackCooldown <= 0) {
+      aim();
+      const spec = WEAPONS[weapon];
+      // Mesma assistência de mira do servidor, com as posições que estão na tela.
+      const others = this.lastCrabs.filter((c) => c.alive && c.id !== store.you);
+      const shot = assistAim(weapon, body, { x: body.fx, y: body.fy }, others, CRAB.radius);
+      body.fx = shot.x;
+      body.fy = shot.y;
+      local.attackCooldown = spec.cooldown;
+      if (spec.style === 'burst') {
+        local.burst = {
+          left: Math.min(WEAPON_RULES.burstShots, server.uses),
+          timer: 0,
+          dx: body.fx,
+          dy: body.fy,
+        };
+      } else {
+        // O tiro também sai na hora; o acerto (e quem voa) vem do servidor.
+        this.startSwing(store.you, weapon, body.fx, body.fy, this.shotLength(weapon, body, others));
+        this.localRecoil(body, body.fx, body.fy, spec.recoil);
+      }
+    }
+    this.advanceLocalBurst(local, dt);
+    stepBody(body, dir, terrain, level, dt, weaponMoveMods(weapon));
 
     const now = performance.now();
     local.history.push({ t: now, x: local.body.x, y: local.body.y });
@@ -255,7 +374,7 @@ export class GameScene extends Phaser.Scene {
     local.sendTimer += dt;
     if (
       local.sendTimer >= SEND_INTERVAL ||
-      (actions.dash && local.sendTimer >= MIN_SEND_INTERVAL)
+      (input.hasPending() && local.sendTimer >= MIN_SEND_INTERVAL)
     ) {
       local.sendTimer = 0;
       const sent = input.consumeActions();
@@ -263,6 +382,56 @@ export class GameScene extends Phaser.Scene {
       local.sentAt.set(local.seq, now);
       send({ t: 'input', seq: local.seq, dx: dir.dx, dy: dir.dy, ...sent });
     }
+  }
+
+  private localRecoil(body: Body, dx: number, dy: number, amount: number): void {
+    if (amount <= 0) return;
+    body.kx -= dx * amount;
+    body.ky -= dy * amount;
+    body.dashT = 0;
+  }
+
+  /** Rajada local: cada bala com o mesmo ritmo e espalhamento do servidor (o sorteio é visual). */
+  private advanceLocalBurst(local: LocalCrab, dt: number): void {
+    const b = local.burst;
+    if (b.left <= 0) return;
+    if (local.body.stunT > 0) {
+      b.left = 0;
+      return;
+    }
+    b.timer -= dt;
+    const you = this.deps.store.you;
+    const others = this.lastCrabs.filter((c) => c.alive && c.id !== you);
+    while (b.left > 0 && b.timer <= 0) {
+      const a = Math.atan2(b.dy, b.dx) + (Math.random() * 2 - 1) * WEAPON_RULES.burstJitter;
+      const dir = { fx: Math.cos(a), fy: Math.sin(a) };
+      const from = { ...local.body, ...dir };
+      this.startSwing(
+        you,
+        'submetralhadora',
+        dir.fx,
+        dir.fy,
+        this.shotLength('submetralhadora', from, others),
+      );
+      this.localRecoil(local.body, dir.fx, dir.fy, WEAPONS.submetralhadora.recoil);
+      b.left--;
+      b.timer += WEAPON_RULES.burstInterval;
+    }
+  }
+
+  /** Até onde o tiro vai (bala: para no primeiro da linha). Outras armas: alcance. */
+  private shotLength(kind: WeaponKind, from: Body, others: CrabRender[]): number {
+    const spec = WEAPONS[kind];
+    if (spec.style !== 'bullet' && spec.style !== 'burst') return spec.reach;
+    let length: number = spec.reach;
+    for (const c of others) {
+      const dx = c.x - from.x;
+      const dy = c.y - from.y;
+      const dist = Math.hypot(dx, dy);
+      const angle = Math.atan2(from.fx * dy - from.fy * dx, from.fx * dx + from.fy * dy);
+      if (dist < length && inStrikeZone(kind, dist, angle, CRAB.radius)) length = dist;
+    }
+    return length;
   }
 
   /**
@@ -350,6 +519,7 @@ export class GameScene extends Phaser.Scene {
         breath: latest.breath,
         dashing: cb.dashing,
         stunned: latest.stunned,
+        weapon: latest.alive ? latest.weapon : null,
         color: info?.color ?? CRAB_COLORS[0],
         name: info?.name ?? '?',
       };
@@ -429,13 +599,64 @@ export class GameScene extends Phaser.Scene {
         view.labelResolution = res;
       }
       view.label.setPosition(px, py - 11).setDepth(9_000);
+      this.renderHeldWeapon(view, c, px, py + bob, now);
     }
     for (const [id, view] of this.crabViews) {
       if (seen.has(id)) continue;
-      view.sprite.destroy();
-      view.label.destroy();
+      this.destroyCrabView(view);
       this.crabViews.delete(id);
     }
+  }
+
+  /**
+   * Imagem que gira livremente (arma na mão, foguete). O arredondamento de vértices do
+   * pixelArt ("safeAuto" no Phaser 4.2) corta sprites longos rotacionados pela diagonal,
+   * então ele fica desligado só nelas.
+   */
+  private rotatingImage(key: string): Phaser.GameObjects.Image {
+    const img = this.add.image(0, 0, key);
+    img.vertexRoundMode = 'off';
+    return img;
+  }
+
+  private destroyCrabView(view: CrabView): void {
+    view.sprite.destroy();
+    view.label.destroy();
+    view.weapon?.destroy();
+  }
+
+  /**
+   * Arma ao lado do caranguejo, apontando pra mira; dá coice a cada tiro.
+   */
+  private renderHeldWeapon(
+    view: CrabView,
+    c: CrabRender,
+    px: number,
+    py: number,
+    now: number,
+  ): void {
+    if (view.weaponKind !== c.weapon) {
+      view.weapon?.destroy();
+      view.weapon = c.weapon ? this.rotatingImage(`weapon-${c.weapon}`) : null;
+      view.weaponKind = c.weapon;
+    }
+    const img = view.weapon;
+    if (!img || !c.weapon) return;
+    const left = c.fx < -0.1;
+    const grip = WEAPON_GRIP[c.weapon];
+    const k = (now - view.swingAt) / SWING_MS;
+    // Aponta pra mira (radianos, positivo = horário com y pra baixo).
+    let angle = Math.atan2(c.fy, Math.abs(c.fx));
+    // Coice: o cano sobe e volta.
+    if (k >= 0 && k < 1) angle -= 0.6 * (1 - k);
+    img
+      .setOrigin(left ? 1 - grip.x : grip.x, grip.y)
+      .setFlipX(left)
+      .setRotation(left ? -angle : angle)
+      .setPosition(px + (left ? -5 : 5), py - 2)
+      .setDepth(view.sprite.depth + 1)
+      .setScale(view.sprite.scaleY)
+      .setAlpha(view.sprite.alpha);
   }
 
   /**
@@ -449,8 +670,7 @@ export class GameScene extends Phaser.Scene {
   private crabView(id: string, color: number, name: string): CrabView {
     let view = this.crabViews.get(id);
     if (view && view.color !== color) {
-      view.sprite.destroy();
-      view.label.destroy();
+      this.destroyCrabView(view);
       view = undefined;
     }
     if (!view) {
@@ -476,6 +696,9 @@ export class GameScene extends Phaser.Scene {
         flashUntil: 0,
         nextGhostAt: 0,
         wasDashing: false,
+        weapon: null,
+        weaponKind: null,
+        swingAt: -Infinity,
       };
       this.crabViews.set(id, view);
     }
@@ -483,23 +706,71 @@ export class GameScene extends Phaser.Scene {
     return view;
   }
 
-  private renderShells(): void {
-    const { shells } = this.deps.store;
+  /** Armas no chão: aparecem com um "pop", flutuam e brilham (o anel vem no overlay). */
+  private renderWeaponItems(terrain: Terrain, level: number): void {
     const ids = new Set<number>();
-    for (const s of shells) {
-      ids.add(s.id);
-      if (this.shellViews.has(s.id)) continue;
-      const img = this.add
-        .image(Math.round(s.x * TILE), Math.round(s.y * TILE), s.gold ? 'shell-gold' : 'shell')
-        .setDepth(Math.round(s.y * TILE) - 8);
-      this.tweens.add({ targets: img, y: img.y - 2, duration: 600, yoyo: true, repeat: -1 });
-      this.shellViews.set(s.id, img);
+    for (const w of this.deps.store.weapons) {
+      ids.add(w.id);
+      let img = this.weaponViews.get(w.id);
+      if (!img) {
+        const px = Math.round(w.x * TILE);
+        const py = Math.round(w.y * TILE);
+        img = this.add
+          .image(px, py - 2, `weapon-${w.kind}`)
+          .setRotation(-0.35)
+          .setDepth(py - 6)
+          .setScale(0);
+        this.tweens.add({ targets: img, scale: 1, duration: 260, ease: 'Back.easeOut' });
+        this.tweens.add({ targets: img, y: py - 5, duration: 700, yoyo: true, repeat: -1 });
+        this.weaponViews.set(w.id, img);
+      }
+      // Na água a arma boia balançando; nos últimos segundos pisca: o mar já vai levar.
+      const floating = depthAt(terrain, w.x, w.y, level) > 0;
+      const now = performance.now();
+      const leaving = w.afloat > WEAPON_RULES.floatSeconds - 3 && Math.floor(now / 120) % 2 === 0;
+      img
+        .setRotation(floating ? -0.35 + Math.sin(now / 300 + w.id) * 0.25 : -0.35)
+        .setAlpha(leaving ? 0.35 : 1);
     }
-    for (const [id, img] of this.shellViews) {
+    for (const [id, img] of this.weaponViews) {
       if (ids.has(id)) continue;
       img.destroy();
-      this.shellViews.delete(id);
+      this.weaponViews.delete(id);
     }
+  }
+
+  /** A arma do chão que o R pegaria agora (a mesma regra do servidor). */
+  private nearestWeapon(): { x: number; y: number; kind: WeaponKind } | null {
+    const local = this.local;
+    if (!local || this.deps.store.phase !== 'playing') return null;
+    let best: { x: number; y: number; kind: WeaponKind } | null = null;
+    let bestDist: number = WEAPON_RULES.pickupRadius;
+    for (const w of this.deps.store.weapons) {
+      const d = Math.hypot(w.x - local.body.x, w.y - local.body.y);
+      if (d <= bestDist) {
+        best = w;
+        bestDist = d;
+      }
+    }
+    return best;
+  }
+
+  private updatePrompt(): void {
+    const near = this.nearestWeapon();
+    if (!near) {
+      this.prompt.setVisible(false);
+      return;
+    }
+    const mine = this.deps.store.latest()?.crabs.get(this.deps.store.you)?.weapon;
+    // Desarmado dá pra pegar com R ou Espaço; já armado, só R troca (Espaço ataca).
+    const key = isTouch() ? '' : mine ? 'R: ' : 'R/Espaço: ';
+    const verb = mine ? 'trocar por' : 'pegar';
+    const text = `${key}${verb} ${WEAPONS[near.kind].name}`;
+    if (this.prompt.text !== text) this.prompt.setText(text);
+    this.prompt
+      .setResolution(this.textResolution())
+      .setPosition(Math.round(near.x * TILE), Math.round(near.y * TILE) - 12)
+      .setVisible(true);
   }
 
   // ------------------------------------------------------------------ efeitos
@@ -516,36 +787,59 @@ export class GameScene extends Phaser.Scene {
     const y = fx.y * TILE;
     const involvesMe = fx.by === you || fx.target === you;
     switch (fx.kind) {
-      case 'shove':
-        this.impact(x, y, involvesMe);
+      case 'swing':
+        // O próprio tiro já saiu na hora (predição); os dos outros, aqui.
+        if (fx.by !== you && fx.by && fx.weapon) {
+          this.startSwing(fx.by, fx.weapon, fx.dx ?? 1, fx.dy ?? 0, fx.value);
+        }
+        break;
+      case 'hit': {
+        const kind = fx.weapon ?? 'revolver';
+        const words = HIT_WORDS[kind];
+        const word = words[Math.floor(Math.random() * words.length)]!;
+        if (kind === 'submetralhadora') {
+          // Bala de rajada: acerto miúdo; a palavra só de vez em quando, senão vira poluição.
+          this.puff(x, y, 0xfff2b0, 3, 6);
+          if (Math.random() < 0.2) this.floatText(x, y - 10, word, '#fff2b0', 8);
+        } else if (kind !== 'bazuca') {
+          // Bazuca: a explosão ('boom') já é o efeito; aqui só o rodopio de quem voou.
+          this.impact(x, y, involvesMe, word);
+        }
         if (fx.target) {
           const victim = this.crabViews.get(fx.target);
           if (victim) {
             const now = performance.now();
-            victim.spinUntil = now + 280;
+            const spin = kind === 'bazuca' ? 650 : kind === 'espingarda' ? 520 : 280;
+            victim.spinUntil = Math.max(victim.spinUntil, now + spin);
             victim.flashUntil = now + 60;
           }
         }
-        sfx.shove();
+        if (kind !== 'bazuca') sfx.hit(kind);
+        break;
+      }
+      case 'boom':
+        this.explosion(x, y);
+        break;
+      case 'pickup':
+        this.puff(x, y, 0xffe9a8, 8, 9);
+        if (fx.weapon) this.floatText(x, y - 10, WEAPONS[fx.weapon].name, '#ffe9a8', 8);
+        if (fx.by === you) sfx.pickup();
+        break;
+      case 'drop':
+        this.puff(x, y + 3, 0xe3c27e, 5, 6);
+        if (fx.by === you) sfx.drop();
+        break;
+      case 'break':
+        // Acabou a munição: a arma é jogada fora.
+        this.puff(x, y, 0x4a4f5a, 6, 8);
+        this.floatText(x, y - 12, 'sem bala!', '#f4efe6', 8);
+        if (fx.by === you) sfx.click();
         break;
       case 'drown':
         this.splash(x, y);
         this.floatText(x, y - 8, fx.target === you ? 'glub…' : 'glub', '#cfe9f2', 9);
         sfx.splash();
         break;
-      case 'shell': {
-        const value = fx.value ?? 1;
-        this.puff(x, y, value > 1 ? 0xf2c14e : 0xfbe7d3, 6, 6);
-        this.floatText(
-          x,
-          y - 8,
-          `+${value}`,
-          value > 1 ? '#f2c14e' : '#fbe7d3',
-          value > 1 ? 10 : 8,
-        );
-        if (fx.by === you) sfx.shell(value > 1);
-        break;
-      }
       case 'dash':
         // O próprio bote já foi desenhado na hora (predição); os dos outros, no render.
         if (fx.by !== you) sfx.dash();
@@ -598,7 +892,175 @@ export class GameScene extends Phaser.Scene {
     this.tweens.add({ targets: g, alpha: 0, duration: 180, onComplete: () => g.destroy() });
   }
 
-  private impact(x: number, y: number, involvesMe: boolean): void {
+  /**
+   * Tiro saiu: coice da arma, fumaça e rastro. O tiro sai de onde o atirador está agora
+   * e vai até `length` tiles (a bala para no primeiro que pegar).
+   */
+  private startSwing(id: string, kind: WeaponKind, fx: number, fy: number, length?: number): void {
+    const view = this.crabViews.get(id);
+    if (!view) return;
+    view.swingAt = performance.now();
+    const len = Math.hypot(fx, fy) || 1;
+    const shot: Shot = {
+      kind,
+      x: view.lastX,
+      y: view.lastY,
+      fx: fx / len,
+      fy: fy / len,
+      length: length ?? WEAPONS[kind].reach,
+      start: performance.now(),
+    };
+    const mx = (shot.x + shot.fx * 0.7) * TILE;
+    const my = (shot.y + shot.fy * 0.7) * TILE;
+    const heavy = kind === 'espingarda' || kind === 'bazuca';
+    if (kind !== 'submetralhadora') this.puff(mx, my, 0xd8d2c4, heavy ? 10 : 5, 8); // fumaça
+    if (kind === 'bazuca') {
+      // Contrafogo: a bazuca cospe fumaça e fogo pra trás do ombro.
+      const bx = (shot.x - shot.fx * 0.8) * TILE;
+      const by = (shot.y - shot.fy * 0.8) * TILE;
+      this.puff(bx, by, 0xf2a03a, 8, 10);
+      this.puff(bx, by, 0xd8d2c4, 12, 16);
+    }
+    if (id === this.deps.store.you) {
+      // Rebote sentido na câmera: as pesadas chacoalham bem mais.
+      this.cameras.main.shake(heavy ? 150 : 50, heavy ? 0.008 : 0.002);
+    }
+    this.shots.push(shot);
+    if (id === this.deps.store.you || this.isNear(id)) this.deps.sfx.swing(kind);
+  }
+
+  /** Som dos tiros alheios só quando dá pra ver: senão a briga do outro lado vira barulho. */
+  private isNear(id: string): boolean {
+    const view = this.crabViews.get(id);
+    return view !== undefined && this.cameras.main.worldView.contains(view.sprite.x, view.sprite.y);
+  }
+
+  /** Foguetes em voo: posição do servidor, empurrada pra frente pelo tempo desde o snapshot. */
+  private renderRockets(now: number): void {
+    const { store } = this.deps;
+    const since = Math.min(0.15, (now - (store.latest()?.at ?? now)) / 1000);
+    const ids = new Set<number>();
+    for (const r of store.rockets) {
+      ids.add(r.id);
+      let view = this.rocketViews.get(r.id);
+      if (!view) {
+        view = { img: this.rotatingImage('rocket'), smokeAt: 0 };
+        this.rocketViews.set(r.id, view);
+      }
+      const x = (r.x + r.dx * WEAPON_RULES.rocketSpeed * since) * TILE;
+      const y = (r.y + r.dy * WEAPON_RULES.rocketSpeed * since) * TILE;
+      view.img.setPosition(x, y).setRotation(Math.atan2(r.dy, r.dx)).setDepth(9_400);
+      if (now >= view.smokeAt) {
+        // Rastro de fumaça atrás do foguete.
+        view.smokeAt = now + 35;
+        this.puff(x - r.dx * 5, y - r.dy * 5, 0xd8d2c4, 2, 3);
+      }
+    }
+    for (const [id, view] of this.rocketViews) {
+      if (ids.has(id)) continue;
+      view.img.destroy();
+      this.rocketViews.delete(id);
+    }
+  }
+
+  private clearRockets(): void {
+    for (const view of this.rocketViews.values()) view.img.destroy();
+    this.rocketViews.clear();
+  }
+
+  /**
+   * Os 9 blocos destruídos (o atingido e os 8 em volta): o contorno pisca e cada um
+   * solta pedaços de terra que voam pra fora e caem. O buraco em si vem do servidor.
+   */
+  private blastBlocks(x: number, y: number): void {
+    const cx = Math.floor(x / TILE);
+    const cy = Math.floor(y / TILE);
+    const outline = this.add.graphics().setDepth(9_550);
+    outline
+      .lineStyle(2, 0xfff2b0, 1)
+      .strokeRect((cx - 1) * TILE, (cy - 1) * TILE, TILE * 3, TILE * 3);
+    this.tweens.add({
+      targets: outline,
+      alpha: 0,
+      duration: 350,
+      onComplete: () => outline.destroy(),
+    });
+    const colors = [0x8a5a34, 0x6e4626, 0xe3c27e, 0x7b6a58];
+    for (let ty = cy - 1; ty <= cy + 1; ty++) {
+      for (let tx = cx - 1; tx <= cx + 1; tx++) {
+        const bx = (tx + 0.5) * TILE;
+        const by = (ty + 0.5) * TILE;
+        // Pra fora do centro (o bloco do meio espalha pra todo lado).
+        const out = Math.atan2(by - y, bx - x);
+        for (let i = 0; i < 4; i++) {
+          const size = Math.random() < 0.5 ? 3 : 2;
+          const chunk = this.add
+            .rectangle(bx, by, size, size, colors[(tx + ty + i) & 3]!)
+            .setDepth(9_550);
+          const a =
+            tx === cx && ty === cy ? Math.random() * Math.PI * 2 : out + (Math.random() - 0.5);
+          const dist = 6 + Math.random() * 12;
+          const up = 10 + Math.random() * 10;
+          const p = { t: 0 };
+          this.tweens.add({
+            targets: p,
+            t: 1,
+            duration: 450 + Math.random() * 250,
+            onUpdate: () => {
+              // Arco: sobe e cai enquanto se afasta.
+              chunk.x = bx + Math.cos(a) * dist * p.t;
+              chunk.y = by + Math.sin(a) * dist * p.t - up * 4 * p.t * (1 - p.t);
+              chunk.rotation = p.t * 6;
+              chunk.alpha = 1 - p.t * 0.7;
+            },
+            onComplete: () => chunk.destroy(),
+          });
+        }
+      }
+    }
+  }
+
+  /** Explosão do foguete: clarão, onda de choque, terra voando e fumaça. */
+  private explosion(x: number, y: number): void {
+    const flash = this.add.circle(x, y, 10, 0xfff2b0).setDepth(9_700);
+    this.tweens.add({
+      targets: flash,
+      scale: 2.6,
+      alpha: 0,
+      duration: 220,
+      onComplete: () => flash.destroy(),
+    });
+    const fire = this.add.circle(x, y, 8, 0xf2a03a).setDepth(9_650);
+    this.tweens.add({
+      targets: fire,
+      scale: 2.2,
+      alpha: 0,
+      duration: 380,
+      ease: 'Quad.easeOut',
+      onComplete: () => fire.destroy(),
+    });
+    const radius = WEAPON_RULES.blastRadius * TILE;
+    const ring = this.add.circle(x, y, radius).setStrokeStyle(2, 0xfff2b0).setDepth(9_600);
+    ring.setScale(0.2);
+    this.tweens.add({
+      targets: ring,
+      scale: 1,
+      alpha: 0,
+      duration: 320,
+      ease: 'Quad.easeOut',
+      onComplete: () => ring.destroy(),
+    });
+    this.puff(x, y, 0x8a5a34, 16, radius);
+    this.puff(x, y, 0xd8d2c4, 14, radius * 1.2);
+    this.blastBlocks(x, y);
+    // Tremor proporcional à distância de quem está assistindo.
+    const me = this.local?.body;
+    const near = me ? Math.hypot(me.x * TILE - x, me.y * TILE - y) < radius * 3 : false;
+    this.cameras.main.shake(near ? 260 : 120, near ? 0.012 : 0.004);
+    if (near || this.cameras.main.worldView.contains(x, y)) this.deps.sfx.boom();
+  }
+
+  private impact(x: number, y: number, involvesMe: boolean, word: string): void {
     // Estrela de impacto: raios que crescem e somem.
     const g = this.add.graphics({ x, y }).setDepth(9_700);
     g.lineStyle(2, 0xfff2b0, 1);
@@ -620,7 +1082,6 @@ export class GameScene extends Phaser.Scene {
     });
     this.puff(x, y, 0xf4efe6, 10, 14);
 
-    const word = SHOVE_WORDS[Math.floor(Math.random() * SHOVE_WORDS.length)]!;
     const t = this.add
       .text(x, y - 10, word, {
         fontFamily: 'Silkscreen',
@@ -753,6 +1214,29 @@ export class GameScene extends Phaser.Scene {
     const now = performance.now();
     const { store } = this.deps;
 
+    // Anel sob as armas do chão: dá pra achar de longe; a mais perto de você pulsa.
+    const near = this.nearestWeapon();
+    for (const w of store.weapons) {
+      const px = Math.round(w.x * TILE);
+      const py = Math.round(w.y * TILE);
+      const isNear = near !== null && near.x === w.x && near.y === w.y;
+      const pulse = 0.5 + 0.3 * Math.sin(now / 220 + w.id);
+      if (depthAt(terrain, w.x, w.y, level) > 0) {
+        // Boiando: ondinha em volta, como a de quem está nadando.
+        const r = 9 + Math.sin(now / 200 + w.id) * 1.5;
+        g.lineStyle(1, 0xf4efe6, 0.8).strokeEllipse(px, py + 2, r * 2, r * 0.8);
+      }
+      g.lineStyle(1, WEAPONS[w.kind].color, isNear ? 1 : pulse);
+      g.strokeEllipse(px, py + 4, isNear ? 20 : 16, isNear ? 8 : 6);
+    }
+
+    for (let i = this.shots.length - 1; i >= 0; i--) {
+      const shot = this.shots[i]!;
+      const t = (now - shot.start) / SHOT_MS;
+      if (t >= 1) this.shots.splice(i, 1);
+      else this.drawShot(g, shot, t);
+    }
+
     for (const c of crabs) {
       if (!c.alive) continue;
       const px = Math.round(c.x * TILE);
@@ -810,6 +1294,46 @@ export class GameScene extends Phaser.Scene {
       g.beginPath();
       g.arc(px, py + 4, 8, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ready);
       g.strokePath();
+    }
+  }
+
+  /** Tiro: clarão no cano e rastro da bala (revólver) ou do leque de chumbo (espingarda). */
+  private drawShot(g: Phaser.GameObjects.Graphics, shot: Shot, t: number): void {
+    const spec = WEAPONS[shot.kind];
+    const ox = shot.x * TILE;
+    const oy = shot.y * TILE;
+    const muzzle = 0.7 * TILE;
+    const mx = ox + shot.fx * muzzle;
+    const my = oy + shot.fy * muzzle;
+    const alpha = 1 - t;
+    if (t < 0.4) {
+      const flash = 1 - t / 0.4;
+      g.fillStyle(0xf2a03a, flash).fillCircle(mx, my, 3 + 5 * flash);
+      g.fillStyle(0xfff2b0, flash).fillCircle(mx, my, 2 + 3 * flash);
+    }
+    const base = Math.atan2(shot.fy, shot.fx);
+    // Bazuca: só o clarão; o foguete em si vem do servidor e voa sozinho.
+    if (spec.style === 'rocket') return;
+    if (spec.style === 'bullet' || spec.style === 'burst') {
+      const end = shot.length * TILE;
+      const burst = spec.style === 'burst';
+      g.lineStyle(burst ? 2 : 3, 0x2b1d14, alpha * 0.5);
+      g.lineBetween(mx, my, ox + shot.fx * end, oy + shot.fy * end);
+      g.lineStyle(burst ? 1 : 2, spec.color, alpha);
+      g.lineBetween(mx, my, ox + shot.fx * end, oy + shot.fy * end);
+      return;
+    }
+    // Chumbo: bolinhas que se espalham pelo leque, deixando um risco fraco.
+    const travel = Math.min(1, t * 2) * shot.length * TILE;
+    for (let i = 0; i < 7; i++) {
+      const a = base + (i / 6 - 0.5) * spec.arc;
+      const d = travel * (0.85 + (0.15 * ((i * 37) % 7)) / 6);
+      const px = ox + Math.cos(a) * d;
+      const py = oy + Math.sin(a) * d;
+      g.lineStyle(1, spec.color, alpha * 0.8);
+      g.lineBetween(mx, my, px, py);
+      g.fillStyle(0x2b1d14, alpha).fillRect(px - 2, py - 2, 4, 4);
+      g.fillStyle(0xfff2b0, alpha).fillRect(px - 1, py - 1, 2, 2);
     }
   }
 
@@ -897,8 +1421,7 @@ export class GameScene extends Phaser.Scene {
   private clearDemoCrabs(): void {
     for (const [id, view] of this.crabViews) {
       if (!id.startsWith('demo')) continue;
-      view.sprite.destroy();
-      view.label.destroy();
+      this.destroyCrabView(view);
       this.crabViews.delete(id);
     }
   }
@@ -911,9 +1434,6 @@ export class GameScene extends Phaser.Scene {
     this.drawTerrain(demo.terrain, level, -1, 'morro');
     this.local = null;
     this.seenRoundId = -1;
-
-    for (const v of this.shellViews.values()) v.destroy();
-    this.shellViews.clear();
 
     const crabs: CrabRender[] = demo.crabs.map((c, i) => {
       if (demo.time > c.until) {
@@ -943,6 +1463,8 @@ export class GameScene extends Phaser.Scene {
         breath: 1,
         dashing: c.body.dashT > 0,
         stunned: false,
+        // Os caranguejos do menu já desfilam com as armas.
+        weapon: WEAPON_KINDS[i % WEAPON_KINDS.length]!,
         color: c.color,
         name: '',
       };
@@ -950,10 +1472,13 @@ export class GameScene extends Phaser.Scene {
     // Remove caranguejos de partida que sobraram.
     for (const [id, view] of this.crabViews) {
       if (id.startsWith('demo')) continue;
-      view.sprite.destroy();
-      view.label.destroy();
+      this.destroyCrabView(view);
       this.crabViews.delete(id);
     }
+    for (const v of this.weaponViews.values()) v.destroy();
+    this.weaponViews.clear();
+    this.clearRockets();
+    this.prompt.setVisible(false);
     this.renderCrabs(crabs, demo.terrain, level, dt);
     this.overlay.clear();
 

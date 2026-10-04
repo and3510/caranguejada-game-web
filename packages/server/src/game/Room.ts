@@ -3,6 +3,7 @@ import {
   CRAB_COLORS,
   MAX_PLAYERS,
   MIN_PLAYERS_TO_START,
+  MAX_TIEBREAK_ROUNDS,
   ROUND_END_SECONDS,
   DEFAULT_ROUNDS,
   SCORE,
@@ -19,6 +20,7 @@ import {
   type MapKind,
   type Phase,
   type PlayerInfo,
+  type RoundNext,
   type Rng,
   type ServerMessage,
 } from '@caranguejada/shared';
@@ -57,6 +59,8 @@ export class Room {
   private mapPool: MapKind[] = [...MAP_KINDS];
   private sim: Simulation | null = null;
   private phaseTimer = 0;
+  /** Decidido no fim de cada rodada: o que vem quando o pop-up fechar. */
+  private next: RoundNext = 'round';
   private snapshotTimer = 0;
   private pendingFx: FxEvent[] = [];
   private nextId = 1;
@@ -297,8 +301,8 @@ export class Room {
       case 'roundEnd':
         this.phaseTimer -= dt;
         if (this.phaseTimer <= 0) {
-          if (this.round < this.totalRounds) this.startRound(this.round + 1);
-          else this.endMatch();
+          if (this.next === 'matchEnd') this.endMatch();
+          else this.startRound(this.round + 1);
           return;
         }
         break;
@@ -327,12 +331,13 @@ export class Room {
     if (result.scores.length > 0) this.broadcastRoom();
 
     if (sim.isOver()) {
-      const { winner, byPoints } = sim.roundResult();
+      const winner = sim.winner();
       const wm = winner ? this.members.get(winner) : undefined;
       if (wm) {
         wm.score += SCORE.lastStanding;
         wm.stars++;
       }
+      this.next = this.decideNext();
       this.phase = 'roundEnd';
       this.phaseTimer = ROUND_END_SECONDS;
       this.broadcastSnapshot();
@@ -342,16 +347,33 @@ export class Room {
         t: 'roundEnd',
         winner: wm ? wm.id : null,
         round: this.round,
-        byPoints: wm ? byPoints : false,
+        next: this.next,
       });
     }
+  }
+
+  /**
+   * Depois das rodadas combinadas, a partida só acaba quando alguém tem mais estrelas
+   * que todos os outros. Empate no topo: rodada extra de desempate (com um teto, pra
+   * partida nunca ficar presa).
+   */
+  private decideNext(): RoundNext {
+    if (this.round < this.totalRounds) return 'round';
+    if (this.round >= this.totalRounds + MAX_TIEBREAK_ROUNDS) return 'matchEnd';
+    return this.hasStarLeader() ? 'matchEnd' : 'tiebreak';
+  }
+
+  private hasStarLeader(): boolean {
+    const stars = [...this.members.values()].map((m) => m.stars).sort((a, b) => b - a);
+    return stars.length < 2 || stars[0]! > stars[1]!;
   }
 
   private endMatch(): void {
     this.phase = 'matchEnd';
     this.sim = null;
+    // Quem vence a partida é quem tem mais estrelas; os pontos só desempatam a tabela.
     const ranking = [...this.members.values()]
-      .sort((a, b) => b.score - a.score || b.stars - a.stars)
+      .sort((a, b) => b.stars - a.stars || b.score - a.score)
       .map((m) => ({ id: m.id, name: m.name, score: m.score, stars: m.stars, color: m.color }));
     this.broadcast({ t: 'matchEnd', ranking });
     this.broadcastRoom();
@@ -365,7 +387,8 @@ export class Room {
       t: 'snap',
       time: Math.round(sim.time * 1000) / 1000,
       crabs: sim.crabSnapshots(),
-      shells: sim.shellSnapshots(),
+      weapons: sim.weaponSnapshots(),
+      rockets: sim.rocketSnapshots(),
       tiles: sim.drainDirtyTiles(),
       fx: this.pendingFx,
     });

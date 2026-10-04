@@ -2,12 +2,16 @@ import {
   MAP_HINTS,
   MAP_KINDS,
   MAP_NAMES,
+  WEAPONS,
   isFlooding,
   type FxEvent,
   type MapKind,
   type PlayerInfo,
+  type RoundNext,
+  type WeaponKind,
 } from '@caranguejada/shared';
-import { STAR_ART, STAR_PALETTE, crabCanvas, pixelArtCanvas } from '../game/sprites';
+import type { FrameInfo } from '../game/GameScene';
+import { STAR_ART, STAR_PALETTE, crabCanvas, pixelArtCanvas, weaponCanvas } from '../game/sprites';
 import type { Store } from '../state';
 
 function $<T extends HTMLElement = HTMLElement>(id: string): T {
@@ -17,6 +21,21 @@ function $<T extends HTMLElement = HTMLElement>(id: string): T {
 }
 
 const hex = (color: number) => `#${color.toString(16).padStart(6, '0')}`;
+
+/** Rodapé do pop-up de fim de rodada: o que vem a seguir. */
+const NEXT_TEXT: Record<RoundNext, string> = {
+  round: 'próxima rodada já já…',
+  tiebreak: 'empate nas estrelas: vem uma rodada extra de desempate!',
+  matchEnd: 'resultado final já já…',
+};
+
+/** Artigo de cada arma, para a narração ("com a bazuca", "seu revólver"). */
+const ARTICLE: Record<WeaponKind, 'o' | 'a'> = {
+  espingarda: 'a',
+  revolver: 'o',
+  submetralhadora: 'a',
+  bazuca: 'a',
+};
 
 function crabIcon(color: number): HTMLCanvasElement {
   const canvas = crabCanvas(color, 0);
@@ -136,6 +155,8 @@ export class Ui {
 
   private bannerTimer = 0;
   private lastCountdown = -1;
+  /** Evita mexer no DOM do slot da arma a cada quadro. */
+  private weaponSlotKey = '';
 
   constructor() {
     const title = $<HTMLCanvasElement>('title-crab');
@@ -169,8 +190,10 @@ export class Ui {
     this.touch.classList.toggle('hidden', inLobby || !touchEnabled);
     if (inLobby) this.renderLobby(store);
     else this.renderScoreboard(store);
-    $('hud-round').textContent =
-      `rodada ${store.round}/${store.totalRounds} · ${MAP_NAMES[store.mapKind]}`;
+    const extra = store.round - store.totalRounds;
+    const roundLabel =
+      extra > 0 ? `desempate ${extra}` : `rodada ${store.round}/${store.totalRounds}`;
+    $('hud-round').textContent = `${roundLabel} · ${MAP_NAMES[store.mapKind]}`;
   }
 
   private renderLobby(store: Store): void {
@@ -199,10 +222,17 @@ export class Ui {
     mapsLabel.classList.toggle('hidden', isHost);
     mapsLabel.textContent = `Mapas: ${mapsSummary(store.maps)}`;
 
-    // No resultado final o ranking já mostra todo mundo: a lista repetida só ocupa espaço.
-    const list = $('players');
-    list.classList.toggle('hidden', store.phase === 'matchEnd');
-    list.replaceChildren(...store.players.map((p) => this.playerRow(p, store.you)));
+    // Quem está na sala agora (inclusive depois do resultado final, pra ver os bots
+    // que o anfitrião põe ou tira antes de jogar de novo).
+    const bots = store.players.filter((p) => p.bot).length;
+    const total = store.players.length;
+    const crabs = `${total} ${total === 1 ? 'caranguejo' : 'caranguejos'}`;
+    const botsText = bots === 0 ? 'nenhum bot' : `${bots} ${bots === 1 ? 'bot' : 'bots'}`;
+    $('roster').textContent =
+      store.phase === 'matchEnd'
+        ? `Na sala pra próxima partida: ${crabs} (${botsText})`
+        : `Na sala: ${crabs} (${botsText})`;
+    $('players').replaceChildren(...store.players.map((p) => this.playerRow(p, store.you)));
   }
 
   private playerRow(p: PlayerInfo, you: string): HTMLLIElement {
@@ -269,18 +299,14 @@ export class Ui {
    * Pop-up de fim de rodada: todos os caranguejos, com as estrelas acumuladas.
    * Quem venceu agora ganha a estrela nova com animação.
    */
-  showRoundSummary(store: Store, winnerId: string | null, byPoints: boolean): void {
+  showRoundSummary(store: Store, winnerId: string | null, next: RoundNext): void {
     const winner = winnerId ? store.player(winnerId) : undefined;
-    const isLast = store.round >= store.totalRounds;
-    $('summary-title').textContent = `Rodada ${store.round} de ${store.totalRounds}`;
+    const extra = store.round - store.totalRounds;
+    $('summary-title').textContent =
+      extra > 0 ? `Rodada extra de desempate` : `Rodada ${store.round} de ${store.totalRounds}`;
     let sub: string;
-    if (!winner) sub = 'Ninguém levou: afundaram juntos e empataram nos pontos.';
-    else {
-      const who = winner.id === store.you ? 'Você' : winner.name;
-      sub = byPoints
-        ? `${who} venceu no desempate (mais pontos na rodada)`
-        : `${who} foi o último de pé`;
-    }
+    if (!winner) sub = 'Empate: ninguém levou a estrela.';
+    else sub = `${winner.id === store.you ? 'Você' : winner.name} foi o último de pé`;
     $('summary-sub').textContent = sub;
 
     // Aqui só importam as estrelas: quem venceu mais rodadas aparece em cima.
@@ -299,7 +325,7 @@ export class Ui {
         return li;
       }),
     );
-    $('summary-next').textContent = isLast ? 'resultado final já já…' : 'próxima rodada já já…';
+    $('summary-next').textContent = NEXT_TEXT[next];
     this.roundSummary.classList.remove('hidden');
   }
 
@@ -307,14 +333,9 @@ export class Ui {
     this.roundSummary.classList.add('hidden');
   }
 
-  /** Atualizações por quadro: ilha restante, recarga do dash, contagem regressiva. */
-  frame(
-    store: Store,
-    roundTime: number,
-    land: number,
-    dashReady: number,
-    onBeep: (final: boolean) => void,
-  ): void {
+  /** Atualizações por quadro: ilha restante, recargas, arma na mão, contagem regressiva. */
+  frame(store: Store, info: FrameInfo, onBeep: (final: boolean) => void): void {
+    const { roundTime, land, dashReady } = info;
     const fill = $('tide-fill');
     // A barra mostra quanto da ilha a água já engoliu.
     fill.style.width = `${Math.round((1 - land) * 100)}%`;
@@ -328,16 +349,20 @@ export class Ui {
     $('dash-fill')
       .closest('.dash-meter')!
       .classList.toggle('ready', dashReady >= 1);
+    this.renderWeaponSlot(info);
 
     if (store.phase === 'countdown') {
       const left = Math.ceil((store.countdownEndsAt - performance.now()) / 1000);
       if (left !== this.lastCountdown && left > 0) {
         this.lastCountdown = left;
-        // Primeiro a dica do mapa; no último segundo, o mistério.
+        // Desempate avisa primeiro; depois a dica do mapa; no último segundo, o mistério.
+        const tiebreak = store.round > store.totalRounds;
         const sub =
           left === 1
             ? 'o último pedaço de terra é surpresa: fica de olho na água'
-            : `${MAP_NAMES[store.mapKind]}: ${MAP_HINTS[store.mapKind]}`;
+            : tiebreak && left >= 3
+              ? 'rodada extra de desempate: quem vencer fica na frente!'
+              : `${MAP_NAMES[store.mapKind]}: ${MAP_HINTS[store.mapKind]}`;
         this.banner(String(left), sub, 1100);
         onBeep(false);
       }
@@ -348,6 +373,36 @@ export class Ui {
       }
       this.lastCountdown = -1;
     }
+  }
+
+  /** Slot da arma: ícone, nome, munição, recarga e o que ela faz de especial. */
+  private renderWeaponSlot({ weapon, uses, attackReady }: FrameInfo): void {
+    const slot = $('weapon-slot');
+    const ready = Math.max(0, Math.min(1, attackReady));
+    $('attack-fill').style.width = `${Math.round(ready * 100)}%`;
+    slot.classList.toggle('ready', weapon !== null && ready >= 1);
+
+    const key = `${weapon ?? '-'}:${uses}`;
+    if (key === this.weaponSlotKey) return;
+    const kindChanged = this.weaponSlotKey.split(':')[0] !== (weapon ?? '-');
+    this.weaponSlotKey = key;
+    slot.classList.toggle('empty', weapon === null);
+    if (kindChanged) {
+      const icon = weapon ? weaponCanvas(weapon) : document.createElement('canvas');
+      icon.id = 'weapon-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      $('weapon-icon').replaceWith(icon);
+    }
+    if (!weapon) {
+      $('weapon-name').textContent = 'sem arma';
+      $('weapon-uses').textContent = '';
+      $('weapon-hint').textContent = 'só dash: ache uma arma no mapa e aperte E';
+      return;
+    }
+    const spec = WEAPONS[weapon];
+    $('weapon-name').textContent = spec.name;
+    $('weapon-uses').textContent = `${uses} ${uses === 1 ? spec.unit[0] : spec.unit[1]}`;
+    $('weapon-hint').textContent = spec.hint;
   }
 
   banner(text: string, sub = '', ms = 2500): void {
@@ -377,9 +432,19 @@ export class Ui {
   narrate(fx: FxEvent, store: Store): void {
     const name = (id?: string) =>
       id === store.you ? 'você' : (store.player(id ?? '')?.name ?? '?');
+    if (fx.kind === 'break' && fx.by === store.you && fx.weapon) {
+      const own = ARTICLE[fx.weapon] === 'a' ? 'Sua' : 'Seu';
+      this.toast(`${own} ${WEAPONS[fx.weapon].name.toLowerCase()} ficou sem munição!`);
+      return;
+    }
     if (fx.kind !== 'drown') return;
     if (fx.by) {
-      this.toast(`${cap(name(fx.by))} jogou ${name(fx.target)} pro fundo (+${fx.value ?? 2})`);
+      const how = fx.weapon
+        ? ` com ${ARTICLE[fx.weapon]} ${WEAPONS[fx.weapon].name.toLowerCase()}`
+        : '';
+      this.toast(
+        `${cap(name(fx.by))} jogou ${name(fx.target)} pro fundo${how} (+${fx.value ?? 2})`,
+      );
     } else {
       this.toast(`${cap(name(fx.target))} afundou. glub.`);
     }

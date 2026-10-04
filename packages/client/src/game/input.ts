@@ -1,12 +1,20 @@
 /**
  * Entrada unificada (teclado + toque). Direção é estado contínuo (segurar);
- * o dash é um toque acumulado até ser consumido pelo envio de rede/predição.
+ * dash, tiro e pegar/largar são toques acumulados até o envio de rede/predição consumir.
  */
 export interface Actions {
+  /** C: dash (só desloca). */
   dash: boolean;
+  /** Espaço: tiro com a arma na mão (desarmado, pega a arma do chão). */
+  attack: boolean;
+  /** R: pega, larga ou troca de arma. */
+  grab: boolean;
 }
 
-const KEYMAP: Record<string, 'dash' | 'up' | 'down' | 'left' | 'right'> = {
+type ActionName = keyof Actions;
+type Move = 'up' | 'down' | 'left' | 'right';
+
+const KEYMAP: Record<string, ActionName | Move> = {
   KeyW: 'up',
   ArrowUp: 'up',
   KeyS: 'down',
@@ -15,14 +23,18 @@ const KEYMAP: Record<string, 'dash' | 'up' | 'down' | 'left' | 'right'> = {
   ArrowLeft: 'left',
   KeyD: 'right',
   ArrowRight: 'right',
-  Space: 'dash',
-  ShiftLeft: 'dash',
-  KeyJ: 'dash',
+  KeyC: 'dash',
+  Space: 'attack',
+  KeyR: 'grab',
 };
+
+const isAction = (a: string): a is ActionName => a === 'dash' || a === 'attack' || a === 'grab';
+
+const noActions = (): Actions => ({ dash: false, attack: false, grab: false });
 
 export class InputController {
   private readonly held = new Set<string>();
-  private pendingDash = false;
+  private pending: Actions = noActions();
   private stick = { x: 0, y: 0 };
   enabled = false;
 
@@ -40,7 +52,7 @@ export class InputController {
     if (!action || !this.enabled) return;
     e.preventDefault();
     if (down) {
-      if (!e.repeat && action === 'dash') this.pendingDash = true;
+      if (!e.repeat && isAction(action)) this.pending[action] = true;
       this.held.add(action);
     } else {
       this.held.delete(action);
@@ -50,7 +62,7 @@ export class InputController {
   /** Solta tudo (ex.: ao abrir o menu), para o caranguejo não sair andando sozinho. */
   release(): void {
     this.held.clear();
-    this.pendingDash = false;
+    this.pending = noActions();
   }
 
   direction(): { dx: number; dy: number } {
@@ -66,12 +78,17 @@ export class InputController {
 
   /** Lê sem consumir (para a predição local). */
   peekActions(): Actions {
-    return { dash: this.pendingDash };
+    return { ...this.pending };
+  }
+
+  /** Algum toque esperando envio? (manda na hora em vez de esperar o próximo pacote) */
+  hasPending(): boolean {
+    return this.pending.dash || this.pending.attack || this.pending.grab;
   }
 
   consumeActions(): Actions {
     const out = this.peekActions();
-    this.pendingDash = false;
+    this.pending = noActions();
     return out;
   }
 
@@ -114,11 +131,13 @@ export class InputController {
     stick.addEventListener('pointerup', release);
     stick.addEventListener('pointercancel', release);
 
-    touchUi.querySelectorAll<HTMLButtonElement>('[data-action="dash"]').forEach((btn) => {
+    touchUi.querySelectorAll<HTMLButtonElement>('[data-action]').forEach((btn) => {
+      const action = btn.dataset.action ?? '';
+      if (!isAction(action)) return;
       btn.addEventListener('pointerdown', (e) => {
         e.preventDefault();
         if (!this.enabled) return;
-        this.pendingDash = true;
+        this.pending[action] = true;
         btn.classList.add('on');
       });
       const off = () => btn.classList.remove('on');

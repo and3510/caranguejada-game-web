@@ -1,5 +1,6 @@
 import { NAME_MAX_LENGTH, isValidRoundCount } from './constants';
 import { normalizeMapPool, type MapKind } from './terrain';
+import type { WeaponKind } from './weapons';
 
 /**
  * Protocolo JSON sobre WebSocket. A sala é escolhida na URL de conexão
@@ -36,20 +37,42 @@ export interface CrabSnapshot {
   breath: number;
   dashing: boolean;
   stunned: boolean;
+  /** Arma na mão (null = desarmado: só anda e dá dash). */
+  weapon: WeaponKind | null;
+  /** Golpes que a arma ainda aguenta. */
+  uses: number;
   /** Último input processado deste jogador (para reconciliação no cliente). */
   ack: number;
   /** Segundos de simulação desde que esse input começou a valer. */
   ackAge: number;
 }
 
-export interface ShellSnapshot {
+/** Foguete da bazuca em voo. */
+export interface RocketSnapshot {
   id: number;
   x: number;
   y: number;
-  gold: boolean;
+  dx: number;
+  dy: number;
 }
 
-export type FxKind = 'shove' | 'drown' | 'shell' | 'dash';
+export interface WeaponItemSnapshot {
+  id: number;
+  x: number;
+  y: number;
+  kind: WeaponKind;
+  uses: number;
+  /** Há quanto tempo está boiando (s); o mar leva em WEAPON_RULES.floatSeconds. */
+  afloat: number;
+}
+
+/**
+ * - swing: tiro disparado (`value` = até onde a bala/o chumbo foi, em tiles);
+ * - hit: o tiro/explosão pegou alguém;
+ * - boom: o foguete da bazuca explodiu;
+ * - pickup / drop / break: arma pegada, largada ou quebrada (de fogo: acabou a munição).
+ */
+export type FxKind = 'swing' | 'hit' | 'boom' | 'pickup' | 'drop' | 'break' | 'drown' | 'dash';
 
 export interface FxEvent {
   kind: FxKind;
@@ -60,7 +83,15 @@ export interface FxEvent {
   /** Quem sofreu o evento. */
   target?: string;
   value?: number;
+  /** Arma envolvida (tiro, acerto, afogamento creditado...). */
+  weapon?: WeaponKind;
+  /** Direção do tiro. */
+  dx?: number;
+  dy?: number;
 }
+
+/** Depois do fim de uma rodada: a próxima normal, uma extra de desempate, ou o fim. */
+export type RoundNext = 'round' | 'tiebreak' | 'matchEnd';
 
 export type ErrorCode =
   | 'room_not_found'
@@ -97,17 +128,21 @@ export type ServerMessage =
       /** Tempo da rodada (s) — a maré é função dele. */
       time: number;
       crabs: CrabSnapshot[];
-      shells: ShellSnapshot[];
+      /** Armas caídas no chão. */
+      weapons: WeaponItemSnapshot[];
+      /** Foguetes da bazuca em voo. */
+      rockets: RocketSnapshot[];
       /** Tiles alterados desde o último snapshot: [índice, altura]. */
       tiles: [number, number][];
       fx: FxEvent[];
     }
   | {
       t: 'roundEnd';
+      /** null: empate (afundaram juntos) ou o tempo acabou com mais de um de pé. */
       winner: string | null;
       round: number;
-      /** Os últimos afundaram juntos e o desempate foi pelos pontos da rodada. */
-      byPoints: boolean;
+      /** O que vem depois: outra rodada, rodada extra de desempate ou o resultado final. */
+      next: RoundNext;
     }
   | {
       t: 'matchEnd';
@@ -121,8 +156,12 @@ export interface InputMessage {
   seq: number;
   dx: number;
   dy: number;
-  /** Toque: dispara um dash (que também empurra quem estiver no caminho). */
+  /** Toque (C): dispara um dash. Só desloca: não empurra ninguém. */
   dash: boolean;
+  /** Toque (Espaço): tiro com a arma na mão. Desarmado, pega a arma do chão. */
+  attack: boolean;
+  /** Toque (E): pega a arma do chão, larga a da mão ou troca uma pela outra. */
+  grab: boolean;
 }
 
 export type ClientMessage =
@@ -182,6 +221,8 @@ export function parseClientMessage(raw: string): ClientMessage | null {
         dx: clampUnit(msg.dx),
         dy: clampUnit(msg.dy),
         dash: msg.dash === true,
+        attack: msg.attack === true,
+        grab: msg.grab === true,
       };
     }
     case 'start':

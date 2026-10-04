@@ -288,10 +288,15 @@ kbd {
   border: 3px solid var(--ink);
 }
 
+.roster {
+  margin: 14px 0 0;
+  font-size: 14px;
+}
+
 .players {
   list-style: none;
   padding: 0;
-  margin: 14px 0;
+  margin: 6px 0 14px;
 }
 
 .players li,
@@ -530,6 +535,87 @@ kbd {
   justify-content: space-between;
 }
 
+.hud-meters {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.weapon-slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(320px, 70vw);
+  padding: 4px 8px;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+#weapon-icon {
+  width: 40px;
+  height: 32px;
+  flex: none;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+
+.weapon-slot.empty #weapon-icon {
+  border: 2px dashed rgba(43, 29, 20, 0.4);
+}
+
+.weapon-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.weapon-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+#weapon-name {
+  font-family: var(--font-title);
+  font-size: 12px;
+  font-weight: normal;
+}
+
+#weapon-uses {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+#weapon-hint {
+  font-size: 12px;
+  line-height: 1.15;
+}
+
+.attack-bar {
+  position: relative;
+  width: 110px;
+  height: 8px;
+  background: var(--foam);
+  border: 2px solid var(--ink);
+}
+
+#attack-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--weed);
+}
+
+.weapon-slot.empty .attack-bar {
+  display: none;
+}
+
+.weapon-slot.ready {
+  background: #ffe9a8;
+}
+
 .dash-meter {
   display: flex;
   align-items: center;
@@ -603,6 +689,10 @@ kbd {
   border: 3px solid var(--ink);
 }
 
+.weapons-list li {
+  margin-bottom: 2px;
+}
+
 .touch-buttons {
   display: grid;
   grid-template-columns: repeat(2, 64px);
@@ -635,6 +725,14 @@ kbd {
 @media (pointer: coarse) {
   .keys {
     display: none;
+  }
+  /* No celular o espaço é dos botões: a dica da arma fica só no "Como jogar". */
+  #weapon-hint {
+    display: none;
+  }
+  .hud-meters {
+    flex-direction: row;
+    align-items: flex-end;
   }
 }
 

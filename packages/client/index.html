@@ -28,7 +28,7 @@
       <div class="board menu-board">
         <canvas id="title-crab" width="16" height="16" aria-hidden="true"></canvas>
         <h1>Caranguejada</h1>
-        <p class="tagline">a água tá subindo. empurra quem tiver na beirada.</p>
+        <p class="tagline">a água tá subindo. pega uma arma e derruba quem tiver na beirada.</p>
 
         <label class="field">
           <span>Seu nome</span>
@@ -74,8 +74,15 @@
           <ul>
             <li><kbd>WASD</kbd> / setas: andar de lado (é caranguejo, né)</li>
             <li>
-              <kbd>Espaço</kbd>: dash — dispara rápido para fugir da água ou de alguém, e joga longe
-              quem estiver no caminho
+              <kbd>C</kbd>: dash — dispara rápido para fugir da água ou de alguém (não empurra
+              ninguém)
+            </li>
+            <li>
+              <kbd>R</kbd> ou <kbd>Espaço</kbd>: desarmado, pega a arma do chão. <kbd>R</kbd>
+              também larga a sua ou troca por outra
+            </li>
+            <li>
+              <kbd>Espaço</kbd>: já armado, atira. <b>Sem arma não dá pra atacar</b>, só fugir
             </li>
             <li><kbd>Esc</kbd>: menu (volume e sair da partida)</li>
             <li>
@@ -84,9 +91,33 @@
           </ul>
           <p>
             A água invade a ilha das bordas para o centro, cada vez mais rápido. Na água o fôlego
-            acaba. Concha vale ponto, jogar alguém pro fundo vale mais, e o último de pé leva a
-            rodada.
+            acaba. O último de pé leva a rodada e ganha uma estrela; se os últimos afundarem juntos,
+            é empate e ninguém leva. Vence a partida quem tiver mais estrelas, e empate no fim vira
+            rodada extra de desempate.
           </p>
+          <p>
+            Armas aparecem em terra alta (sem terra, boiando na água perto de você) e são jogadas
+            fora quando acaba a munição (quanto mais fraco o tiro, mais munição). Da mais comum pra
+            mais rara:
+          </p>
+          <ul class="weapons-list">
+            <li>
+              <b>Revólver</b> (6 tiros): tiro reto de longe que afasta o primeiro da mira, sem
+              rebote.
+            </li>
+            <li>
+              <b>Espingarda</b> (3 tiros): leque de chumbo de perto que arremessa longe, mas o
+              rebote te joga pra trás.
+            </li>
+            <li>
+              <b>Submetralhadora</b> (30 balas): cada aperto solta uma rajada de 6 balas fracas; a
+              rajada inteira na mesma pessoa varre ela pra longe.
+            </li>
+            <li>
+              <b>Bazuca</b> (2 foguetes): o foguete voa (dá pra desviar), explode em área e destrói
+              o bloco atingido e os 8 em volta. De perto, a explosão pega você também.
+            </li>
+          </ul>
         </details>
       </div>
     </section>
@@ -100,6 +131,7 @@
         </div>
         <h2 class="room-title">Sala <span id="room-code" class="code"></span></h2>
         <button id="btn-copy" class="btn btn-small">Copiar link</button>
+        <p id="roster" class="muted roster"></p>
         <ul id="players" class="players"></ul>
         <div class="field rounds-field">
           <span>Rodadas</span>
@@ -148,11 +180,28 @@
       <div id="toasts" class="toasts" aria-live="polite"></div>
       <div id="banner" class="banner hidden"></div>
       <div class="hud-bottom">
-        <div class="dash-meter" aria-label="Recarga do dash">
-          <span>dash</span>
-          <div class="dash-bar"><div id="dash-fill"></div></div>
+        <div class="hud-meters">
+          <div id="weapon-slot" class="weapon-slot empty" aria-label="Arma na mão">
+            <canvas id="weapon-icon" aria-hidden="true"></canvas>
+            <div class="weapon-info">
+              <div class="weapon-head">
+                <b id="weapon-name">sem arma</b>
+                <span id="weapon-uses"></span>
+              </div>
+              <div class="attack-bar" aria-label="Recarga do tiro">
+                <div id="attack-fill"></div>
+              </div>
+              <small id="weapon-hint"></small>
+            </div>
+          </div>
+          <div class="dash-meter" aria-label="Recarga do dash">
+            <span>dash</span>
+            <div class="dash-bar"><div id="dash-fill"></div></div>
+          </div>
         </div>
-        <div class="keys">setas/WASD: andar · espaço: dash · esc: menu</div>
+        <div class="keys">
+          WASD: andar · C: dash · espaço: tiro/pegar · R: pegar/largar arma · esc: menu
+        </div>
       </div>
     </section>
 
@@ -194,7 +243,9 @@
     <section id="touch" class="hidden">
       <div id="stick" class="stick"><div id="stick-knob"></div></div>
       <div class="touch-buttons">
-        <button data-action="dash" class="tbtn tbtn-big">dash</button>
+        <button data-action="grab" class="tbtn">pegar</button>
+        <button data-action="dash" class="tbtn">dash</button>
+        <button data-action="attack" class="tbtn tbtn-big">atacar</button>
       </div>
     </section>
 
