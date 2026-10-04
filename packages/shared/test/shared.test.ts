@@ -10,6 +10,7 @@ import {
   WEAPONS,
   WEAPON_KINDS,
   createBody,
+  knockbackMultiplier,
   decodeHeights,
   encodeHeights,
   generateTerrain,
@@ -204,6 +205,27 @@ describe('protocol', () => {
     ).toMatchObject({ dash: true, attack: true, grab: true });
   });
 
+  it('mantém a mira, a flag de mouse e o tempo visto; descarta o que é inválido', () => {
+    const ok = parseClientMessage(
+      '{"t":"input","seq":1,"dx":0,"dy":0,"fx":0.6,"fy":0.8,"mouse":true,"vt":12.5,"attack":true}',
+    );
+    expect(ok).toMatchObject({ fx: 0.6, fy: 0.8, mouse: true, vt: 12.5, attack: true });
+    // Mira incompleta ou lixo: ignorada (o input em si continua valendo).
+    expect(parseClientMessage('{"t":"input","seq":1,"dx":0,"dy":0,"fx":0.6}')).not.toHaveProperty(
+      'fx',
+    );
+    expect(
+      parseClientMessage('{"t":"input","seq":1,"dx":0,"dy":0,"fx":"a","fy":1,"vt":-3}'),
+    ).not.toHaveProperty('fx');
+    expect(parseClientMessage('{"t":"input","seq":1,"dx":0,"dy":0,"vt":-3}')).not.toHaveProperty(
+      'vt',
+    );
+    // Valores enormes são limitados a [-1, 1].
+    expect(
+      parseClientMessage('{"t":"input","seq":1,"dx":0,"dy":0,"fx":99,"fy":-99}'),
+    ).toMatchObject({ fx: 1, fy: -1 });
+  });
+
   it('aceita só quantidades de rodada válidas', () => {
     expect(parseClientMessage('{"t":"setRounds","rounds":5}')).toEqual({
       t: 'setRounds',
@@ -249,6 +271,15 @@ describe('armas', () => {
     expect(count.espingarda! / n).toBeCloseTo(0.3, 2);
     expect(count.submetralhadora! / n).toBeCloseTo(0.2, 2);
     expect(count.bazuca! / n).toBeCloseTo(0.1, 2);
+  });
+});
+
+describe('dano percentual', () => {
+  it('multiplica o empurrão: 0% = 1×, 100% = 2×, com teto de 3×', () => {
+    expect(knockbackMultiplier(0)).toBe(1);
+    expect(knockbackMultiplier(100)).toBe(2);
+    expect(knockbackMultiplier(10_000)).toBe(3);
+    expect(knockbackMultiplier(-50)).toBe(1);
   });
 });
 

@@ -4,8 +4,8 @@
  */
 
 export const TICK_RATE = 30;
-export const SNAPSHOT_RATE = 15;
-export const CLIENT_INPUT_RATE = 20;
+export const SNAPSHOT_RATE = 20;
+export const CLIENT_INPUT_RATE = 30;
 
 export const MAP_WIDTH = 40;
 export const MAP_HEIGHT = 28;
@@ -30,6 +30,15 @@ export const ROUND_END_SECONDS = 5;
  * O teto só existe pra partida nunca ficar presa (na prática, nunca chega lá).
  */
 export const MAX_TIEBREAK_ROUNDS = 10;
+
+/**
+ * Compensação de lag: o jogador vê os outros um pouco no passado (interpolação + rede).
+ * O servidor guarda este tanto de histórico e volta os alvos até no máximo
+ * MAX_LAG_COMP_SECONDS pra decidir o tiro (mais que isso seria vantagem pra quem tem
+ * conexão ruim, e dá pra mirar em alguém que já saiu de lá).
+ */
+export const LAG_HISTORY_SECONDS = 0.5;
+export const MAX_LAG_COMP_SECONDS = 0.3;
 export const ROUND_HARD_LIMIT_SECONDS = 120;
 
 export const CRAB = {
@@ -44,8 +53,8 @@ export const CRAB = {
   /** Na água o empurrado desliza mais longe. */
   waterKnockbackFriction: 2.5,
   /** Fôlego perdido por segundo em água rasa / funda. */
-  breathDrain: 0.22,
-  deepBreathDrain: 0.4,
+  breathDrain: 0.14,
+  deepBreathDrain: 0.25,
   deepWater: 1,
   breathRegen: 0.7,
 } as const;

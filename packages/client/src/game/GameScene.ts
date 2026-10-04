@@ -3,6 +3,7 @@ import {
   CLIENT_INPUT_RATE,
   CRAB,
   CRAB_COLORS,
+  DAMAGE,
   WEAPONS,
   WEAPON_KINDS,
   WEAPON_RULES,
@@ -61,6 +62,8 @@ export interface FrameInfo {
   attackReady: number;
   /** Arma do chão ao alcance (o botão de toque vira "pegar"/"trocar"). */
   nearWeapon: WeaponKind | null;
+  /** Nome de quem você está assistindo (só depois de cair); null = jogando. */
+  spectating: string | null;
 }
 
 interface CrabView {
@@ -120,12 +123,14 @@ interface CrabRender {
   dashing: boolean;
   stunned: boolean;
   weapon: WeaponKind | null;
+  /** Dano acumulado (%). */
+  damage: number;
   color: number;
   name: string;
 }
 
 /** Atraso de interpolação: ~2 snapshots, absorve jitter de rede. */
-const INTERP_DELAY_MS = 110;
+const INTERP_DELAY_MS = 100;
 const SEND_INTERVAL = 1 / CLIENT_INPUT_RATE;
 const MIN_SEND_INTERVAL = 1 / 30;
 const HIT_WORDS: Record<WeaponKind, readonly string[]> = {
@@ -136,6 +141,12 @@ const HIT_WORDS: Record<WeaponKind, readonly string[]> = {
 };
 /** Duração do rastro do tiro (clarão, bala, chumbo). */
 const SHOT_MS = 280;
+/** Laser de alcance: vermelho vivo (o amarelo/laranja sumia na areia), com contorno escuro. */
+const LASER_COLOR = 0xff2a2a;
+const LASER_STROKES: readonly [number, number, number][] = [
+  [3, 0x2b1d14, 0.55],
+  [1.5, LASER_COLOR, 1],
+];
 /** Duração do coice da arma na mão. */
 const SWING_MS = 220;
 const isTouch = () => matchMedia('(pointer: coarse)').matches;
@@ -156,7 +167,9 @@ export class GameScene extends Phaser.Scene {
   >();
   /** Caranguejos como estão na tela (a mira do tiro local usa essas posições). */
   private lastCrabs: CrabRender[] = [];
-  /** "R: pegar Bazuca" em cima da arma mais perto. */
+  /** Tempo do servidor que os outros caranguejos mostram na tela (compensação de lag). */
+  private viewTime = 0;
+  /** "F: pegar Bazuca" em cima da arma mais perto. */
   private prompt!: Phaser.GameObjects.Text;
 
   private local: LocalCrab | null = null;
@@ -164,6 +177,10 @@ export class GameScene extends Phaser.Scene {
   private seenSnapshotAt = 0;
   private cam = { x: 0, y: 0, ready: false };
   private spectateId: string | null = null;
+  /** Nome de quem está sendo assistido (null enquanto você joga). */
+  private spectatingName: string | null = null;
+  /** Troca pedida pelos botões da tela (a do teclado vem do InputController). */
+  private spectateRequest = 0;
   /** Congela o quadro por um instante no acerto: dá peso ao golpe. */
   private hitStopUntil = 0;
   private land = { initial: 1, current: 1, nextAt: 0 };
@@ -269,6 +286,7 @@ export class GameScene extends Phaser.Scene {
       uses: mine?.uses ?? 0,
       attackReady,
       nearWeapon: this.nearestWeapon()?.kind ?? null,
+      spectating: this.spectatingName,
     });
   }
 
@@ -325,34 +343,62 @@ export class GameScene extends Phaser.Scene {
     const local = this.local;
     const dir = input.direction();
     const actions = input.peekActions();
-
     const body = local.body;
-    const aim = () => {
+
+    const free = body.stunT <= 0;
+    const isDashing = body.dashT > 0;
+
+    // --- 1. MIRA DO RATO ---
+    if (free && !isDashing && !input.touchMode) {
+      const aimPos = input.aimPosition();
+      const worldPoint = this.cameras.main.getWorldPoint(aimPos.x, aimPos.y);
+      const crabX = body.x * TILE;
+      const crabY = body.y * TILE;
+
+      const aimDx = worldPoint.x - crabX;
+      const aimDy = worldPoint.y - crabY;
+      const len = Math.hypot(aimDx, aimDy);
+
+      if (len > 0.01) {
+        body.fx = aimDx / len;
+        body.fy = aimDy / len;
+      }
+    } else if (free && !isDashing && input.touchMode) {
+      // Fallback pro telemóvel/touch
       const len = Math.hypot(dir.dx, dir.dy);
       if (len > 0.01) {
         body.fx = dir.dx / len;
         body.fy = dir.dy / len;
       }
-    };
+    }
+
     local.dashCooldown = Math.max(0, local.dashCooldown - dt);
     local.attackCooldown = Math.max(0, local.attackCooldown - dt);
-    const free = body.stunT <= 0;
+
+    // --- 2. DASH ---
     if (actions.dash && free && local.dashCooldown <= 0) {
-      aim();
+      const moveLen = Math.hypot(dir.dx, dir.dy);
+      if (moveLen > 0.01) {
+        body.fx = dir.dx / moveLen;
+        body.fy = dir.dy / moveLen;
+      }
+
       body.dashT = CRAB.dashSeconds;
       local.dashCooldown = CRAB.dashCooldown;
-      // Efeito na hora, sem esperar o servidor: o dash tem que "sair da mão".
       this.dashStartFx(store.you, body.x, body.y, body.fx, body.fy);
     }
+
+    // --- 3. ATAQUE ---
     const weapon = server.weapon;
     if (actions.attack && free && weapon && local.attackCooldown <= 0) {
-      aim();
       const spec = WEAPONS[weapon];
-      // Mesma assistência de mira do servidor, com as posições que estão na tela.
       const others = this.lastCrabs.filter((c) => c.alive && c.id !== store.you);
-      const shot = assistAim(weapon, body, { x: body.fx, y: body.fy }, others, CRAB.radius);
-      body.fx = shot.x;
-      body.fy = shot.y;
+      // Mouse mira exato; só o toque (e o teclado) ganha o "puxão" de mira.
+      if (input.touchMode) {
+        const shot = assistAim(weapon, body, { x: body.fx, y: body.fy }, others, CRAB.radius);
+        body.fx = shot.x;
+        body.fy = shot.y;
+      }
       local.attackCooldown = spec.cooldown;
       if (spec.style === 'burst') {
         local.burst = {
@@ -362,13 +408,25 @@ export class GameScene extends Phaser.Scene {
           dy: body.fy,
         };
       } else {
-        // O tiro também sai na hora; o acerto (e quem voa) vem do servidor.
         this.startSwing(store.you, weapon, body.fx, body.fy, this.shotLength(weapon, body, others));
         this.localRecoil(body, body.fx, body.fy, spec.recoil);
       }
     }
+
     this.advanceLocalBurst(local, dt);
+
+    // GUARDA A MIRA ANTES DO MOVIMENTO (NOVIDADE AQUI)
+    const savedFx = body.fx;
+    const savedFy = body.fy;
+
+    // A função partilhada que estragava a mira move a personagem
     stepBody(body, dir, terrain, level, dt, weaponMoveMods(weapon));
+
+    // RESTAURA A MIRA DO RATO DEPOIS DE ANDAR (desde que não esteja a meio de um dash)
+    if (body.dashT <= 0 && !input.touchMode) {
+      body.fx = savedFx;
+      body.fy = savedFy;
+    }
 
     const now = performance.now();
     local.history.push({ t: now, x: local.body.x, y: local.body.y });
@@ -383,7 +441,18 @@ export class GameScene extends Phaser.Scene {
       const sent = input.consumeActions();
       local.seq++;
       local.sentAt.set(local.seq, now);
-      send({ t: 'input', seq: local.seq, dx: dir.dx, dy: dir.dy, ...sent });
+      send({
+        t: 'input',
+        seq: local.seq,
+        dx: dir.dx,
+        dy: dir.dy,
+        fx: Math.round(body.fx * 1000) / 1000,
+        fy: Math.round(body.fy * 1000) / 1000,
+        mouse: !input.touchMode,
+        // O instante (do servidor) que está na tela: o tiro é decidido ali.
+        vt: this.viewTime,
+        ...sent,
+      });
     }
   }
 
@@ -506,6 +575,7 @@ export class GameScene extends Phaser.Scene {
       }
     }
     const k = b.at === a.at ? 1 : Math.max(0, Math.min(1, (renderAt - a.at) / (b.at - a.at)));
+    this.viewTime = Math.round((a.time + (b.time - a.time) * k) * 1000) / 1000;
 
     const out: CrabRender[] = [];
     for (const cb of b.crabs.values()) {
@@ -523,6 +593,7 @@ export class GameScene extends Phaser.Scene {
         dashing: cb.dashing,
         stunned: latest.stunned,
         weapon: latest.alive ? latest.weapon : null,
+        damage: latest.damage,
         color: info?.color ?? CRAB_COLORS[0],
         name: info?.name ?? '?',
       };
@@ -546,6 +617,7 @@ export class GameScene extends Phaser.Scene {
       if (!c.alive) continue;
       seen.add(c.id);
       const view = this.crabView(c.id, c.color, c.name);
+      this.updateDamageLabel(view, c);
       const moved = Math.hypot(c.x - view.lastX, c.y - view.lastY);
       if (moved > 0.002) view.walk += dt * (c.dashing ? 20 : 8);
       view.lastX = c.x;
@@ -670,6 +742,21 @@ export class GameScene extends Phaser.Scene {
     return Math.max(1, Math.round(this.cameras.main.zoom));
   }
 
+  /**
+   * Dano acumulado ao lado do nome ("Aratu 46%"): quanto mais alto, mais longe os tiros
+   * jogam esse caranguejo. A cor esquenta de branco a vermelho.
+   */
+  private updateDamageLabel(view: CrabView, c: CrabRender): void {
+    const text = c.damage > 0 ? `${c.name} ${c.damage}%` : c.name;
+    if (view.label.text !== text) view.label.setText(text);
+    const hot = Math.min(1, c.damage / DAMAGE.max);
+    const mine = c.id === this.deps.store.you;
+    const base = mine ? [0xff, 0xe9, 0xa8] : [0xf4, 0xef, 0xe6];
+    const rgb = base.map((v, i) => Math.round(v + ([0xff, 0x3b, 0x30][i]! - v) * hot));
+    const color = `#${rgb.map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+    if (view.label.style.color !== color) view.label.setColor(color);
+  }
+
   private crabView(id: string, color: number, name: string): CrabView {
     let view = this.crabViews.get(id);
     if (view && view.color !== color) {
@@ -705,7 +792,6 @@ export class GameScene extends Phaser.Scene {
       };
       this.crabViews.set(id, view);
     }
-    if (view.label.text !== name) view.label.setText(name);
     return view;
   }
 
@@ -765,10 +851,12 @@ export class GameScene extends Phaser.Scene {
       return;
     }
     const mine = this.deps.store.latest()?.crabs.get(this.deps.store.you)?.weapon;
-    // Desarmado dá pra pegar com R ou Espaço; já armado, só R troca (Espaço ataca).
-    const key = isTouch() ? '' : mine ? 'R: ' : 'R/Espaço: ';
+    // Desarmado dá pra pegar com F ou clique; já armado, só F troca (o clique atira).
+    const key = isTouch() ? '' : mine ? 'F: ' : 'F/clique: ';
+    // O alcance da arma do chão aparece antes de pegar.
+    const range = `${WEAPONS[near.kind].reach.toString().replace('.', ',')}`;
     const verb = mine ? 'trocar por' : 'pegar';
-    const text = `${key}${verb} ${WEAPONS[near.kind].name}`;
+    const text = `${key}${verb} ${WEAPONS[near.kind].name} (alcance ${range})`;
     if (this.prompt.text !== text) this.prompt.setText(text);
     this.prompt
       .setResolution(this.textResolution())
@@ -1298,6 +1386,95 @@ export class GameScene extends Phaser.Scene {
       g.arc(px, py + 4, 8, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * ready);
       g.strokePath();
     }
+
+    const weapon = store.latest()?.crabs.get(store.you)?.weapon;
+    if (weapon) this.drawAimGuide(g, me, weapon, now);
+  }
+
+  /**
+   * "Laser" da arma na mão: mostra até onde o tiro chega, na direção da mira.
+   * Linha reta (revólver, submetralhadora) que para no primeiro alvo; cone (espingarda);
+   * linha com o raio da explosão no fim (bazuca). Mais forte quando a arma está pronta.
+   */
+  private drawAimGuide(
+    g: Phaser.GameObjects.Graphics,
+    me: LocalCrab,
+    weapon: WeaponKind,
+    now: number,
+  ): void {
+    const spec = WEAPONS[weapon];
+    const body = me.body;
+    const ox = body.x * TILE;
+    const oy = body.y * TILE;
+    const dx = body.fx;
+    const dy = body.fy;
+    const muzzle = 0.7 * TILE;
+    const sx = ox + dx * muzzle;
+    const sy = oy + dy * muzzle;
+    const ready = me.attackCooldown <= 0;
+    const alpha = ready ? 0.85 + 0.15 * Math.sin(now / 150) : 0.4;
+    const others = this.lastCrabs.filter((c) => c.alive && c.id !== this.deps.store.you);
+
+    if (spec.style === 'spread') {
+      // Cone do leque de chumbo.
+      const base = Math.atan2(dy, dx);
+      const half = spec.arc / 2;
+      const r = (spec.reach + CRAB.radius) * TILE;
+      g.fillStyle(LASER_COLOR, alpha * 0.22);
+      g.beginPath();
+      g.moveTo(sx, sy);
+      g.arc(ox, oy, r, base - half, base + half);
+      g.closePath();
+      g.fillPath();
+      for (const [width, color, a] of LASER_STROKES) {
+        g.lineStyle(width, color, a * alpha);
+        g.lineBetween(sx, sy, ox + Math.cos(base - half) * r, oy + Math.sin(base - half) * r);
+        g.lineBetween(sx, sy, ox + Math.cos(base + half) * r, oy + Math.sin(base + half) * r);
+        g.beginPath();
+        g.arc(ox, oy, r, base - half, base + half);
+        g.strokePath();
+      }
+      return;
+    }
+
+    // Linha: até o fim do alcance, ou até o primeiro alvo (bala) / contato (foguete).
+    let length: number = spec.reach;
+    if (spec.style === 'rocket') {
+      const hit = WEAPON_RULES.rocketHitRadius + CRAB.radius;
+      for (const c of others) {
+        const along = (c.x - body.x) * dx + (c.y - body.y) * dy;
+        const across = Math.abs((c.x - body.x) * dy - (c.y - body.y) * dx);
+        if (along > 0 && along < length && across <= hit) length = along;
+      }
+    } else {
+      length = this.shotLength(weapon, body, others);
+    }
+    const ex = ox + dx * length * TILE;
+    const ey = oy + dy * length * TILE;
+    // Tracejado: dá noção de distância (um traço por meio tile).
+    const total = Math.hypot(ex - sx, ey - sy);
+    const dash = TILE / 2;
+    for (const [width, color, a] of LASER_STROKES) {
+      g.lineStyle(width, color, a * alpha);
+      for (let d = 0; d < total; d += dash * 2) {
+        const t0 = d / total;
+        const t1 = Math.min(1, (d + dash) / total);
+        g.lineBetween(
+          sx + (ex - sx) * t0,
+          sy + (ey - sy) * t0,
+          sx + (ex - sx) * t1,
+          sy + (ey - sy) * t1,
+        );
+      }
+    }
+    g.fillStyle(0x2b1d14, alpha).fillCircle(ex, ey, 3);
+    g.fillStyle(LASER_COLOR, 1).fillCircle(ex, ey, 2);
+    if (spec.style === 'rocket') {
+      for (const [width, color, a] of LASER_STROKES) {
+        g.lineStyle(width, color, a * alpha);
+        g.strokeCircle(ex, ey, WEAPON_RULES.blastRadius * TILE);
+      }
+    }
   }
 
   /** Tiro: clarão no cano e rastro da bala (revólver) ou do leque de chumbo (espingarda). */
@@ -1342,6 +1519,11 @@ export class GameScene extends Phaser.Scene {
 
   // ------------------------------------------------------------------ câmera
 
+  /** Botões ◀ ▶ da tela (celular/tablet): troca quem a câmera acompanha. */
+  spectateStep(step: number): void {
+    this.spectateRequest += step;
+  }
+
   private gameplayZoom(): number {
     const { width, height } = this.scale;
     const z = Math.floor(Math.min(width / (22 * TILE), height / (14 * TILE)));
@@ -1369,11 +1551,20 @@ export class GameScene extends Phaser.Scene {
       return;
     }
 
+    // Os pedidos de troca se acumulam o tempo todo; só valem pra quem já caiu.
+    const step = this.deps.input.consumeSpectate() + this.spectateRequest;
+    this.spectateRequest = 0;
     let target = crabs.find((c) => c.id === store.you && c.alive);
+    this.spectatingName = null;
     if (!target) {
       const alive = crabs.filter((c) => c.alive);
-      target = alive.find((c) => c.id === this.spectateId) ?? alive[0];
+      let i = alive.findIndex((c) => c.id === this.spectateId);
+      if (step !== 0 && alive.length > 0) {
+        i = i < 0 ? 0 : (((i + step) % alive.length) + alive.length) % alive.length;
+      }
+      target = alive[Math.max(0, i)];
       this.spectateId = target?.id ?? null;
+      if (target && store.phase === 'playing') this.spectatingName = target.name;
     }
     const zoom = this.gameplayZoom();
     if (camera.zoom !== zoom)
@@ -1468,6 +1659,7 @@ export class GameScene extends Phaser.Scene {
         stunned: false,
         // Os caranguejos do menu já desfilam com as armas.
         weapon: WEAPON_KINDS[i % WEAPON_KINDS.length]!,
+        damage: 0,
         color: c.color,
         name: '',
       };

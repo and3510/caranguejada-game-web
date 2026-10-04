@@ -125,6 +125,139 @@ describe('Simulation', () => {
     );
   });
 
+  it('o servidor usa a mira do mouse (fx/fy), não a direção em que anda', () => {
+    const sim = arena(2);
+    sim.giveWeapon('a', 'revolver');
+    place(sim, 'a', 8, 10.5);
+    const b = place(sim, 'b', 8, 14); // alvo ao sul
+    // Anda pra leste, mas o mouse aponta pro sul.
+    sim.setInput('a', { dx: 1, dy: 0, fx: 0, fy: 1, mouse: true, seq: 1, attack: true });
+    const { fx } = run(sim, DT);
+    expect(fx).toContainEqual(expect.objectContaining({ kind: 'hit', by: 'a', target: 'b' }));
+    expect(b.ky).toBeGreaterThan(0);
+  });
+
+  it('mouse mira exato: sem o puxão de mira do teclado/toque', () => {
+    const shoot = (mouse: boolean) => {
+      const sim = arena(2);
+      sim.giveWeapon('a', 'revolver');
+      place(sim, 'a', 4, 10.5);
+      place(sim, 'b', 11, 10.5 + 1.2); // ~10° fora da linha: assist alcança, mouse não
+      sim.setInput('a', { dx: 0, dy: 0, fx: 1, fy: 0, mouse, seq: 1, attack: true });
+      return run(sim, DT).fx.some((e) => e.kind === 'hit');
+    };
+    expect(shoot(false)).toBe(true);
+    expect(shoot(true)).toBe(false);
+  });
+
+  describe('compensação de lag', () => {
+    /**
+     * O alvo corre pro sul; o atirador (parado a oeste) mira reto pro leste, na linha onde
+     * o alvo estava `seconds` atrás. Só acerta se o servidor testar o alvo naquele instante.
+     */
+    const duel = (seconds: number, vtAgo: number | null) => {
+      const sim = arena(2);
+      sim.giveWeapon('a', 'revolver');
+      place(sim, 'a', 3, 6);
+      place(sim, 'b', 8, 6); // na linha de tiro (y = 6)
+      sim.setInput('b', { dx: 0, dy: 1, seq: 1 });
+      run(sim, seconds);
+      sim.setInput('b', { dx: 0, dy: 1, seq: 2 });
+      sim.setInput('a', {
+        dx: 0,
+        dy: 0,
+        fx: 1,
+        fy: 0,
+        mouse: true,
+        vt: vtAgo === null ? undefined : sim.time - vtAgo,
+        seq: 1,
+        attack: true,
+      });
+      const b = sim.crabs.get('b')!;
+      const offLine = b.y - 6;
+      const hit = run(sim, DT).fx.some((e) => e.kind === 'hit' && e.target === 'b');
+      return { hit, offLine };
+    };
+
+    it('acerta quem estava na mira quando o atirador atirou (vt)', () => {
+      const { hit, offLine } = duel(0.25, 0.25);
+      expect(offLine).toBeGreaterThan(0.9); // hoje o alvo já está bem fora da linha
+      expect(hit).toBe(true);
+    });
+
+    it('sem vt, o tiro vai contra a posição de agora e erra (o bug do "passou longe")', () => {
+      expect(duel(0.25, null).hit).toBe(false);
+    });
+
+    it('o limite de rewind impede vantagem de lag absurdo', () => {
+      // Pediu 0,45s de volta, mas o servidor só volta MAX_LAG_COMP_SECONDS (0,3s):
+      // o alvo, a 0,3s atrás, já estava fora da linha.
+      const { hit, offLine } = duel(0.45, 0.45);
+      expect(offLine).toBeGreaterThan(1.5);
+      expect(hit).toBe(false);
+    });
+  });
+
+  describe('dano percentual', () => {
+    const shoot = (damage: number, weapon: 'revolver' | 'espingarda' = 'revolver') => {
+      const sim = arena(2);
+      sim.giveWeapon('a', weapon);
+      place(sim, 'a', 8, 10.5);
+      const b = place(sim, 'b', 10, 10.5);
+      b.damage = damage;
+      sim.setInput('a', { dx: 0, dy: 0, fx: 1, fy: 0, mouse: true, seq: 1, attack: true });
+      sim.step(DT);
+      return { sim, b, push: Math.hypot(b.kx, b.ky) };
+    };
+
+    it('cada acerto soma o dano da arma, e o snapshot informa', () => {
+      const { sim, b } = shoot(0);
+      expect(b.damage).toBe(WEAPONS.revolver.damage);
+      expect(sim.crabSnapshots().find((c) => c.id === 'b')!.damage).toBe(WEAPONS.revolver.damage);
+    });
+
+    it('quanto mais dano acumulado, mais longe o próximo acerto joga', () => {
+      const fresh = shoot(0).push;
+      const hurt = shoot(100).push;
+      expect(hurt).toBeGreaterThan(fresh * 1.7);
+      // O teto limita o empurrão a no máximo 3× (não vira míssil).
+      expect(shoot(10_000).push).toBeLessThanOrEqual(WEAPONS.revolver.impulse * 3 + 1e-6);
+    });
+
+    it('tiro que erra não dá dano', () => {
+      const sim = arena(2);
+      sim.giveWeapon('a', 'revolver');
+      place(sim, 'a', 8, 10.5);
+      const b = place(sim, 'b', 10, 14);
+      sim.setInput('a', { dx: 0, dy: 0, fx: 1, fy: 0, mouse: true, seq: 1, attack: true });
+      sim.step(DT);
+      expect(b.damage).toBe(0);
+    });
+
+    it('bazuca e espingarda empurram bem mais que o revólver, e as outras armas subiram pouco', () => {
+      expect(WEAPONS.espingarda.impulse).toBe(26);
+      expect(WEAPONS.bazuca.impulse).toBe(28);
+      expect(WEAPONS.revolver.impulse).toBe(15);
+      expect(WEAPONS.submetralhadora.impulse).toBe(3.5);
+    });
+
+    it('bazuca: quem se explode sozinho não ganha dano; o alvo ganha', () => {
+      const sim = arena(2);
+      sim.giveWeapon('a', 'bazuca');
+      const a = place(sim, 'a', 8, 10.5);
+      const b = place(sim, 'b', 9.4, 10.5);
+      sim.setInput('a', { dx: 0, dy: 0, fx: 1, fy: 0, mouse: true, seq: 1, attack: true });
+      run(sim, 0.3);
+      expect(a.damage).toBe(0);
+      expect(b.damage).toBe(WEAPONS.bazuca.damage);
+    });
+
+    it('zera a cada rodada (simulação nova)', () => {
+      const sim = new Simulation(5, ['a', 'b'], islandTerrain());
+      expect([...sim.crabs.values()].every((c) => c.damage === 0)).toBe(true);
+    });
+  });
+
   it('o tiro só pega quem está na frente', () => {
     const sim = arena(2);
     sim.giveWeapon('a', 'revolver');
@@ -258,7 +391,7 @@ describe('Simulation', () => {
     expect(b.x).toBeGreaterThan(9 + 1.5); // a rajada inteira varreu pra longe
   });
 
-  it('submetralhadora: o pente de 30 balas acaba em 5 rajadas', () => {
+  it('submetralhadora: o pente de 20 balas acaba em 5 rajadas', () => {
     const sim = arena(2);
     sim.giveWeapon('a', 'submetralhadora');
     place(sim, 'a', 8, 10.5);

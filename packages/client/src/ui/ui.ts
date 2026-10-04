@@ -373,6 +373,11 @@ export class Ui {
       .closest('.dash-meter')!
       .classList.toggle('ready', dashReady >= 1);
     this.renderWeaponSlot(info);
+    const watching = info.spectating;
+    $('spectate').classList.toggle('hidden', watching === null);
+    if (watching !== null && $('spectate-name').textContent !== watching) {
+      $('spectate-name').textContent = watching;
+    }
     if (this.touch.dataset.enabled === 'true') this.renderTouchButtons(info);
 
     if (store.phase === 'countdown') {

@@ -7,15 +7,22 @@ Dá pra jogar sozinho (contra bots) ou criar uma sala e mandar o link pros amigo
 
 ## Como se joga
 
-| Tecla          | Ação                                                                     |
-| -------------- | ------------------------------------------------------------------------ |
-| `WASD` / setas | andar                                                                    |
-| `C`            | **dash**: dispara rápido para fugir. Só desloca, **não empurra** ninguém |
-| `Espaço`       | **tiro** com a arma na mão; desarmado, **pega** a arma do chão           |
-| `R`            | **pegar** a arma do chão, **largar** a sua, ou **trocar** uma pela outra |
-| `Esc`          | menu: volume e sair da partida (o jogo **não** pausa)                    |
+| Tecla              | Ação                                                                     |
+| ------------------ | ------------------------------------------------------------------------ |
+| `WASD` / setas     | andar                                                                    |
+| Mouse              | **mira**: o caranguejo aponta pro cursor (o "laser" mostra o alcance)    |
+| Clique             | **tiro** com a arma na mão; desarmado, **pega** a arma do chão           |
+| `Shift` / `Espaço` | **dash**: dispara rápido para fugir. Só desloca, **não empurra** ninguém |
+| `F`                | **pegar** a arma do chão, **largar** a sua, ou **trocar** uma pela outra |
+| `Esc`              | menu: volume e sair da partida (o jogo **não** pausa)                    |
 
-No celular aparecem um direcional e os botões de pegar, dash e atacar na tela.
+Depois que você cai, a câmera acompanha outro jogador e dá pra **trocar** durante a rodada: `Tab`/`E`/`→`/clique passam pro próximo, `Q`/`←` voltam, e no celular há botões ◀ ▶ na tela.
+
+No celular aparecem um direcional e os botões de pegar, dash e atacar na tela (sem mouse, o caranguejo mira pra onde anda).
+
+Com uma arma na mão, uma **linha tracejada** mostra o alcance real dela na direção da mira: reta que
+para no primeiro alvo (revólver, submetralhadora), cone (espingarda) ou reta com o raio da explosão
+no fim (bazuca). Fica mais forte quando a arma está pronta pra atirar.
 
 ### Armas
 
@@ -29,15 +36,30 @@ Largada no chão, a arma guarda o desgaste. Quem afunda leva a arma junto pro fu
 Da mais comum pra mais rara: **revólver** (40% das armas que aparecem), **espingarda** (30%),
 **submetralhadora** (20%) e **bazuca** (10%).
 
+### Dano percentual
+
+Ninguém morre por vida: o que mata continua sendo a água. Mas cada acerto soma **dano (%)** na
+vítima, e **quanto mais dano acumulado, mais longe os próximos acertos a jogam** (100% = o dobro do
+empurrão; teto de 200%, ou 3×). O número aparece ao lado do nome ("Aratu 46%") e esquenta de branco
+a vermelho. Zera a cada rodada. Tiro que erra não soma, e quem se explode sozinho com a bazuca não
+ganha dano.
+
+| Arma            | Empurrão base | Dano por acerto |
+| --------------- | ------------- | --------------- |
+| Bazuca          | 28            | +20%            |
+| Espingarda      | 26            | +14%            |
+| Revólver        | 15            | +8%             |
+| Submetralhadora | 3,5 por bala  | +3% por bala    |
+
 As armas têm **assistência de mira**: no teclado só dá pra apontar em 8 direções, então o
 tiro vai em quem estiver a até 18° da direção apertada.
 
 | Arma                | Chance | Alcance   | Recarga | Desgaste   | Particularidade                                                                                                                                                                                                                                                                                                                                              |
 | ------------------- | ------ | --------- | ------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Revólver**        | 40%    | 7,5 tiles | 0,55s   | 6 tiros    | Tiro reto de longe: **afasta** o primeiro caranguejo da mira (a bala para nele). **Sem rebote**                                                                                                                                                                                                                                                              |
-| **Espingarda**      | 30%    | 3,2 tiles | 1s      | 3 tiros    | Leque de chumbo (40°) que acerta todo mundo no cone e **arremessa longe** (mais forte de perto). O **rebote** joga quem atirou pra trás, um pouco menos longe que a vítima, mesmo errando                                                                                                                                                                    |
-| **Submetralhadora** | 20%    | 5 tiles   | 0,6s    | 30 balas   | Cada aperto solta uma **rajada de 6 balas** fracas e um pouco espalhadas. Uma bala sozinha quase não empurra, mas os empurrões **se somam**: a rajada inteira na mesma pessoa varre ela pra longe. Rebote leve por bala                                                                                                                                      |
-| **Bazuca**          | 10%    | 9 tiles   | 1,2s    | 2 foguetes | O foguete **voa pelo mapa** (dá pra desviar) e explode ao tocar alguém ou no fim do alcance. A explosão empurra **todo mundo** no raio pra longe do centro, **inclusive quem atirou** se estiver perto (dá pra usar de "rocket jump"), e **destrói o bloco atingido e os 8 em volta** (3×3), abrindo uma cratera que a água ocupa. Pesada: anda mais devagar |
+| **Revólver**        | 40%    | 7,5 tiles | 1s      | 6 tiros    | Tiro reto de longe: **afasta** o primeiro caranguejo da mira (a bala para nele). **Sem rebote**                                                                                                                                                                                                                                                              |
+| **Espingarda**      | 30%    | 3,2 tiles | 1,1s    | 3 tiros    | Leque de chumbo (40°) que acerta todo mundo no cone e **arremessa longe** (mais forte de perto). O **rebote** empurra quem atirou um pouco pra trás (bem menos que a vítima), mesmo errando                                                                                                                                                                  |
+| **Submetralhadora** | 20%    | 5 tiles   | 1,3s    | 20 balas   | Cada aperto solta uma **rajada de 4 balas** fracas e um pouco espalhadas. Uma bala sozinha quase não empurra, mas os empurrões **se somam**: a rajada inteira na mesma pessoa varre ela pra longe. Rebote leve por bala                                                                                                                                      |
+| **Bazuca**          | 10%    | 9 tiles   | 1,4s    | 2 foguetes | O foguete **voa pelo mapa** (dá pra desviar) e explode ao tocar alguém ou no fim do alcance. A explosão empurra **todo mundo** no raio pra longe do centro, **inclusive quem atirou** se estiver perto (dá pra usar de "rocket jump"), e **destrói o bloco atingido e os 8 em volta** (3×3), abrindo uma cratera que a água ocupa. Pesada: anda mais devagar |
 
 Os números ficam em [weapons.ts](packages/shared/src/weapons.ts), compartilhados entre o servidor
 e a predição do cliente.
@@ -57,7 +79,7 @@ e a predição do cliente.
   - **Manguezal**: lamaçal cortado por canais sinuosos, com água turva.
 - O dash serve para **fugir** (da enchente ou de alguém; rende igual nadando) e para encurtar a distância até um alvo, mas quem empurra é a **arma**. O tiro sai na direção apertada, então mirar importa; na água o empurrado desliza ainda mais longe.
 - Nadando, o caranguejo anda a **70%** da velocidade a pé e sempre escala para sair da água (beira de telhado, muralha ou casco não vira armadilha).
-- Na água o fôlego acaba em cerca de 4,5s (rasa) ou 2,5s (funda), o que dá tempo de voltar nadando se você cair perto da costa. Jogar alguém pra água funda afoga bem mais rápido.
+- Na água o fôlego acaba em cerca de 7s (rasa) ou 4s (funda), o que dá tempo de voltar nadando se você cair perto da costa. Jogar alguém pra água funda afoga bem mais rápido.
 - As ondas comem a areia na linha d'água.
 - Pontos: acertar alguém que se afoga em até 6s **+2**, último de pé **+5**. Eles só servem pra ordenar a tabela: quem vence é quem tem mais estrelas.
 - **Vence a rodada** o último sobrevivente. Se os últimos afundarem no mesmo instante, é **empate**: ninguém leva a estrela.
@@ -90,9 +112,10 @@ deploy/k8s/ manifests (kustomize)
 
 Pontos de arquitetura:
 
-- **Servidor autoritativo** a 30 ticks/s com passo fixo, enviando snapshots a 15/s. O cliente nunca decide resultado, só envia intenção (direção e ações).
+- **Servidor autoritativo** a 30 ticks/s com passo fixo, enviando snapshots a 20/s. O cliente nunca decide resultado, só envia intenção (direção, mira e ações).
 - **Predição + reconciliação**: o seu caranguejo responde na hora. Quando chega o snapshot, o cliente compara com a posição que _ele mesmo_ tinha quando o servidor aplicou aquele input (`ack` + `ackAge`) e corrige suavemente, assim a latência não vira tremedeira.
-- **Interpolação** dos outros jogadores com cerca de 110ms de atraso.
+- **Interpolação** dos outros jogadores com cerca de 100ms de atraso.
+- **Compensação de lag nos tiros**: você vê os outros um pouco no passado, então cada input leva o tempo de simulação que estava na sua tela (`vt`) e o servidor testa o tiro contra onde o alvo estava _naquele instante_ (até 0,3s de volta). Sem isso, tiro em quem se mexe "passava longe" mesmo parecendo certo.
 - [Simulation.ts](packages/server/src/game/Simulation.ts) e [Room.ts](packages/server/src/game/Room.ts) não conhecem WebSocket (a conexão é a interface `Peer`), por isso dá para testar uma partida inteira em memória.
 
 ## Rodando

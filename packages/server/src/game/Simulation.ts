@@ -1,6 +1,9 @@
 import {
   CRAB,
+  DAMAGE,
   EROSION,
+  LAG_HISTORY_SECONDS,
+  MAX_LAG_COMP_SECONDS,
   ROUND_HARD_LIMIT_SECONDS,
   SCORE,
   WEAPONS,
@@ -12,6 +15,7 @@ import {
   generateTerrain,
   heightAt,
   inStrikeZone,
+  knockbackMultiplier,
   isFlooding,
   pickWeaponKind,
   stepBody,
@@ -30,6 +34,13 @@ import {
 export interface CrabInput {
   dx: number;
   dy: number;
+  /** Mira de quem joga com mouse/toque (ausente nos bots). */
+  fx?: number;
+  fy?: number;
+  /** A mira vem do mouse: não há "puxão" de mira em direção a alguém. */
+  mouse?: boolean;
+  /** Tempo de simulação que o jogador estava vendo (compensação de lag). */
+  vt?: number;
   /** Toques: ficam pendentes até o próximo tick consumir. */
   dash: boolean;
   attack: boolean;
@@ -47,10 +58,12 @@ export interface Crab extends Body {
   uses: number;
   attackCooldown: number;
   /** Rajada da submetralhadora: balas que faltam, tempo até a próxima e direção. */
-  burst: { left: number; timer: number; dx: number; dy: number };
+  burst: { left: number; timer: number; dx: number; dy: number; lag: number };
   lastShovedBy: string | null;
   lastShovedAt: number;
   lastHitWeapon: WeaponKind | null;
+  /** Dano acumulado (%): multiplica o empurrão dos próximos acertos. */
+  damage: number;
   diedAt: number;
   input: CrabInput;
   /** Tempo de simulação em que o input atual chegou. */
@@ -105,6 +118,8 @@ export class Simulation {
   readonly crabs = new Map<string, Crab>();
   readonly weapons: WeaponItem[] = [];
   readonly rockets: Rocket[] = [];
+  /** Posições dos últimos ~0,5s: o tiro é decidido onde o atirador viu o alvo. */
+  private readonly history: { time: number; pos: Map<string, { x: number; y: number }> }[] = [];
   time = 0;
 
   private readonly rng: Rng;
@@ -135,10 +150,11 @@ export class Simulation {
         weapon: null,
         uses: 0,
         attackCooldown: 0,
-        burst: { left: 0, timer: 0, dx: 0, dy: 0 },
+        burst: { left: 0, timer: 0, dx: 0, dy: 0, lag: 0 },
         lastShovedBy: null,
         lastShovedAt: -Infinity,
         lastHitWeapon: null,
+        damage: 0,
         diedAt: Infinity,
         input: emptyInput(),
         inputAt: 0,
@@ -200,6 +216,10 @@ export class Simulation {
     crab.input = {
       dx: input.dx,
       dy: input.dy,
+      fx: input.fx,
+      fy: input.fy,
+      mouse: input.mouse === true,
+      vt: input.vt,
       seq: input.seq,
       // Toques acumulam até o tick consumir, para não perder um aperto rápido.
       dash: prev.dash || input.dash === true,
@@ -234,9 +254,21 @@ export class Simulation {
       if (!crab.alive) continue;
       crab.dashCooldown = Math.max(0, crab.dashCooldown - dt);
       crab.attackCooldown = Math.max(0, crab.attackCooldown - dt);
+
       this.applyActions(crab, result);
       this.advanceBurst(crab, dt, result);
+
+      // GUARDA A MIRA DO RATO ANTES DO MOVIMENTO
+      const savedFx = crab.fx;
+      const savedFy = crab.fy;
+
       stepBody(crab, crab.input, this.terrain, level, dt, weaponMoveMods(crab.weapon));
+
+      // RESTAURA A MIRA PARA OS JOGADORES COM RATO (se não estiverem a dar dash)
+      if (crab.dashT <= 0 && crab.input.fx !== undefined && crab.input.fy !== undefined) {
+        crab.fx = savedFx;
+        crab.fy = savedFy;
+      }
     }
 
     this.resolveCollisions();
@@ -264,23 +296,42 @@ export class Simulation {
     }
 
     this.time += dt;
+    this.recordHistory();
     return result;
   }
 
   private applyActions(crab: Crab, result: StepResult): void {
     const { input } = crab;
     const free = crab.stunT <= 0;
-    // Desarmado, o Espaço também pega a arma do chão (R continua servindo pra isso,
-    // e é o único jeito de largar ou trocar por outra enquanto já se está armado).
+    const isDashing = crab.dashT > 0;
+
+    // 1. Atualiza a mira com o rato recebida pela rede
+    if (free && !isDashing && input.fx !== undefined && input.fy !== undefined) {
+      const aimLen = Math.hypot(input.fx, input.fy);
+      if (aimLen > 0.01) {
+        crab.fx = input.fx / aimLen;
+        crab.fy = input.fy / aimLen;
+      }
+    }
+
     const wasUnarmed = !crab.weapon;
     if ((input.grab || (input.attack && wasUnarmed)) && free) this.grabOrDrop(crab, result);
+
+    // 2. O Dash ignora o rato e foca-se no movimento WASD
     if (input.dash && free && crab.dashCooldown <= 0) {
-      this.aim(crab);
+      const moveLen = Math.hypot(input.dx, input.dy);
+      if (moveLen > 0.01) {
+        crab.fx = input.dx / moveLen;
+        crab.fy = input.dy / moveLen;
+      } else if (input.fx === undefined) {
+        // Fallback para bots: olha para onde anda
+        this.aim(crab);
+      }
       crab.dashT = CRAB.dashSeconds;
       crab.dashCooldown = CRAB.dashCooldown;
       result.fx.push({ kind: 'dash', x: crab.x, y: crab.y, by: crab.id });
     }
-    // Já armado, o Espaço ataca em vez de pegar (nesse caso passou pelo bloco acima).
+
     if (input.attack && free && !wasUnarmed && crab.weapon && crab.attackCooldown <= 0) {
       this.startAttack(crab, crab.weapon, result);
     }
@@ -345,23 +396,74 @@ export class Simulation {
     crab.burst.left = 0;
   }
 
+  /** Guarda onde cada caranguejo estava neste instante (pra voltar no tempo ao atirar). */
+  private recordHistory(): void {
+    const pos = new Map<string, { x: number; y: number }>();
+    for (const c of this.crabs.values()) pos.set(c.id, { x: c.x, y: c.y });
+    this.history.push({ time: this.time, pos });
+    while (this.history.length > 0 && this.time - this.history[0]!.time > LAG_HISTORY_SECONDS) {
+      this.history.shift();
+    }
+  }
+
+  /** Onde o caranguejo estava `lag` segundos atrás (interpola entre dois ticks). */
+  private positionAt(crab: Crab, lag: number): { x: number; y: number } {
+    if (lag <= 0) return crab;
+    const t = this.time - lag;
+    const h = this.history;
+    for (let i = h.length - 1; i >= 0; i--) {
+      const b = h[i]!;
+      if (b.time > t) continue;
+      const pb = b.pos.get(crab.id);
+      const next = h[i + 1];
+      const pn = next?.pos.get(crab.id);
+      if (!pb) return crab;
+      if (!next || !pn) return pb;
+      const k = (t - b.time) / Math.max(1e-6, next.time - b.time);
+      return { x: pb.x + (pn.x - pb.x) * k, y: pb.y + (pn.y - pb.y) * k };
+    }
+    // Mais antigo que o histórico: usa o registro mais velho que existe.
+    return h[0]?.pos.get(crab.id) ?? crab;
+  }
+
+  /**
+   * Quanto voltar no tempo pro tiro de `crab`: o que ele estava vendo (vt) no momento
+   * do input, limitado (nem lag absurdo nem vt do futuro dão vantagem).
+   */
+  private lagFor(crab: Crab): number {
+    const vt = crab.input.vt;
+    if (vt === undefined) return 0;
+    return Math.min(MAX_LAG_COMP_SECONDS, Math.max(0, this.time - vt));
+  }
+
   private startAttack(crab: Crab, kind: WeaponKind, result: StepResult): void {
     const spec = WEAPONS[kind];
-    this.aim(crab);
-    const others = [...this.crabs.values()].filter((c) => c.alive && c !== crab);
-    const aim = assistAim(kind, crab, { x: crab.fx, y: crab.fy }, others, CRAB.radius);
-    crab.fx = aim.x;
-    crab.fy = aim.y;
+
+    // Bots não mandam mira: atiram no sentido em que andam.
+    if (crab.input.fx === undefined || crab.input.fy === undefined) {
+      this.aim(crab);
+    }
+
+    // Os alvos são testados onde o atirador os viu (mouse: mira exata, sem puxão).
+    const lag = this.lagFor(crab);
+    if (!crab.input.mouse) {
+      const seen = [...this.crabs.values()]
+        .filter((c) => c.alive && c !== crab)
+        .map((c) => this.positionAt(c, lag));
+      const aim = assistAim(kind, crab, { x: crab.fx, y: crab.fy }, seen, CRAB.radius);
+      crab.fx = aim.x;
+      crab.fy = aim.y;
+    }
     crab.attackCooldown = spec.cooldown;
     if (spec.style === 'burst') {
       // A primeira bala sai agora; as outras, uma por vez (advanceBurst).
-      crab.burst = { left: WEAPON_RULES.burstShots, timer: 0, dx: crab.fx, dy: crab.fy };
+      crab.burst = { left: WEAPON_RULES.burstShots, timer: 0, dx: crab.fx, dy: crab.fy, lag };
       this.advanceBurst(crab, 0, result);
       return;
     }
     crab.uses--;
     if (spec.style === 'rocket') this.launchRocket(crab, result);
-    else this.fire(crab, kind, crab.fx, crab.fy, result);
+    else this.fire(crab, kind, crab.fx, crab.fy, result, lag);
     this.recoil(crab, crab.fx, crab.fy, spec.recoil);
     this.breakIfWorn(crab, result);
   }
@@ -375,9 +477,16 @@ export class Simulation {
   }
 
   /** Tiro instantâneo numa direção: acerta quem estiver na zona da arma. */
-  private fire(crab: Crab, kind: WeaponKind, dx: number, dy: number, result: StepResult): void {
+  private fire(
+    crab: Crab,
+    kind: WeaponKind,
+    dx: number,
+    dy: number,
+    result: StepResult,
+    lag = 0,
+  ): void {
     const spec = WEAPONS[kind];
-    const targets = this.targetsInZone(crab, kind, dx, dy);
+    const targets = this.targetsInZone(crab, kind, dx, dy, lag);
     const isBullet = spec.style === 'bullet' || spec.style === 'burst';
     // Tiro: o cliente desenha a bala até onde ela parou (no alvo, ou no fim do alcance).
     const shotLength = isBullet && targets[0] ? targets[0].dist : spec.reach;
@@ -409,7 +518,7 @@ export class Simulation {
       const a = Math.atan2(b.dy, b.dx) + jitter;
       const dx = Math.cos(a);
       const dy = Math.sin(a);
-      this.fire(crab, 'submetralhadora', dx, dy, result);
+      this.fire(crab, 'submetralhadora', dx, dy, result, b.lag);
       this.recoil(crab, dx, dy, WEAPONS.submetralhadora.recoil);
       crab.uses--;
       b.left--;
@@ -480,7 +589,12 @@ export class Simulation {
       if (d > WEAPON_RULES.blastRadius + CRAB.radius) continue;
       const nx = d > 1e-3 ? (crab.x - r.x) / d : r.dx;
       const ny = d > 1e-3 ? (crab.y - r.y) / d : r.dy;
-      const impulse = spec.impulse * (1 - 0.5 * Math.min(1, d / WEAPON_RULES.blastRadius));
+      // Quem se explode sozinho não ganha dano (dá pra usar de rocket jump).
+      if (crab.id !== r.owner) crab.damage = Math.min(DAMAGE.max, crab.damage + spec.damage);
+      const impulse =
+        spec.impulse *
+        knockbackMultiplier(crab.damage) *
+        (1 - 0.5 * Math.min(1, d / WEAPON_RULES.blastRadius));
       crab.kx = nx * impulse;
       crab.ky = ny * impulse;
       crab.stunT = Math.max(crab.stunT, spec.stun);
@@ -543,12 +657,15 @@ export class Simulation {
     kind: WeaponKind,
     aimX: number,
     aimY: number,
+    lag = 0,
   ): { victim: Crab; nx: number; ny: number; dist: number }[] {
     const out: { victim: Crab; nx: number; ny: number; dist: number }[] = [];
     for (const victim of this.crabs.values()) {
       if (victim === attacker || !victim.alive) continue;
-      let dx = victim.x - attacker.x;
-      let dy = victim.y - attacker.y;
+      // Onde o atirador viu o alvo (o empurrão, depois, vale no alvo de agora).
+      const seen = this.positionAt(victim, lag);
+      let dx = seen.x - attacker.x;
+      let dy = seen.y - attacker.y;
       let dist = Math.hypot(dx, dy);
       if (dist < 1e-4) {
         dx = aimX;
@@ -578,7 +695,9 @@ export class Simulation {
     result: StepResult,
   ): void {
     const spec = WEAPONS[kind];
-    let impulse = spec.impulse;
+    // O acerto soma dano e já empurra com o total (inclusive este).
+    victim.damage = Math.min(DAMAGE.max, victim.damage + spec.damage);
+    let impulse = spec.impulse * knockbackMultiplier(victim.damage);
     if (spec.style === 'spread') {
       // Chumbo espalha: de perto empurra mais que no limite do alcance.
       impulse *= 1 - WEAPON_RULES.spreadFalloff * Math.min(1, dist / spec.reach);
@@ -806,6 +925,7 @@ export class Simulation {
       fy: r(c.fy),
       alive: c.alive,
       breath: r(c.breath),
+      damage: Math.round(c.damage),
       dashing: c.dashT > 0,
       stunned: c.stunT > 0,
       weapon: c.weapon,

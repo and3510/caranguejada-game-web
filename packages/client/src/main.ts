@@ -259,6 +259,10 @@ const scene = new GameScene({
   onFrame: (info) => ui.frame(store, info, (final) => sfx.countdown(final)),
 });
 
+// Botões ◀ ▶ de quem já caiu (celular/tablet): trocam quem a câmera acompanha.
+document.getElementById('spectate-prev')?.addEventListener('click', () => scene.spectateStep(-1));
+document.getElementById('spectate-next')?.addEventListener('click', () => scene.spectateStep(1));
+
 async function boot(): Promise<void> {
   // Textos do Phaser usam a fonte pixelada: espera carregar (com teto de tempo).
   await Promise.race([
