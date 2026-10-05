@@ -789,8 +789,10 @@ export class Simulation {
   private updateBreath(crab: Crab, level: number, dt: number, result: StepResult): void {
     const depth = depthAt(this.terrain, crab.x, crab.y, level);
     if (depth > 0) {
-      const drain = depth >= CRAB.deepWater ? CRAB.deepBreathDrain : CRAB.breathDrain;
-      crab.breath = Math.max(0, crab.breath - drain * dt);
+      const deep = depth >= CRAB.deepWater;
+      const drain = deep ? CRAB.deepBreathDrain : CRAB.breathDrain;
+      // Só a água funda mata: na rasa o fôlego para no piso (a maré, subindo, vira tudo fundo).
+      crab.breath = Math.max(deep ? 0 : CRAB.shallowBreathFloor, crab.breath - drain * dt);
     } else {
       crab.breath = Math.min(1, crab.breath + CRAB.breathRegen * dt);
     }

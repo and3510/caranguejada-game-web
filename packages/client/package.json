@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@caranguejada/server": "*",
     "@caranguejada/shared": "*",
     "phaser": "^4.2.1"
   },

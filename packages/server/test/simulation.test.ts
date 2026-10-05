@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SCORE, WEAPONS, WEAPON_RULES, tideLevel, type Terrain } from '@caranguejada/shared';
+import { CRAB, SCORE, WEAPONS, WEAPON_RULES, tideLevel, type Terrain } from '@caranguejada/shared';
 import { Simulation } from '../src/game/Simulation';
 
 const DT = 1 / 30;
@@ -542,6 +542,50 @@ describe('Simulation', () => {
     for (const w of sim.weapons) {
       expect(sim.terrain.heights[Math.floor(w.y) * sim.terrain.width + Math.floor(w.x)]).toBe(8);
     }
+  });
+
+  describe('água rasa não afoga', () => {
+    // Na ilha de teste o mar tem altura 0: no começo da rodada o nível é 0,6 (raso)
+    // e, com a maré subindo, o mesmo lugar passa de 1 (fundo).
+    it('o fôlego para no piso e ninguém morre, por mais que fique lá', () => {
+      const sim = arena(20);
+      place(sim, 'b', 10.5, 10.5);
+      const a = place(sim, 'a', 1.5, 1.5);
+      a.breath = 0.2;
+      run(sim, 3); // ainda raso (o nível só passa de 1 lá pelos 3,6s)
+      expect(sim.crabs.get('a')!.alive).toBe(true);
+      expect(a.breath).toBeCloseTo(CRAB.shallowBreathFloor, 5);
+    });
+
+    it('quem sai do raso pro fundo morre rápido (o raso só te deixa fraco)', () => {
+      const sim = arena(21);
+      place(sim, 'b', 10.5, 10.5);
+      const a = place(sim, 'a', 1.5, 1.5);
+      a.breath = CRAB.shallowBreathFloor;
+      sim.time = 10; // maré alta: o mesmo lugar agora é água funda
+      run(sim, 1);
+      expect(a.alive).toBe(false);
+    });
+
+    it('empurrão pro raso não mata (nem credita ponto); pro fundo, mata', () => {
+      // Curto o bastante pra maré não transformar o raso em fundo durante o teste.
+      const push = (time: number, seconds: number) => {
+        const sim = arena(22);
+        sim.time = time;
+        sim.giveWeapon('a', 'revolver');
+        place(sim, 'a', 5.5, 10.5);
+        const b = place(sim, 'b', 3, 10.5); // no mar, a oeste
+        b.breath = 0.15;
+        sim.setInput('a', { dx: 0, dy: 0, fx: -1, fy: 0, mouse: true, seq: 1, attack: true });
+        const { scores } = run(sim, seconds);
+        return { morreu: !b.alive, creditou: scores.length > 0, folego: b.breath };
+      };
+      const raso = push(0, 2.5);
+      expect(raso.morreu).toBe(false); // raso: aguenta
+      expect(raso.folego).toBeCloseTo(CRAB.shallowBreathFloor, 5);
+      expect(raso.creditou).toBe(false);
+      expect(push(10, 4).morreu).toBe(true); // fundo: afunda
+    });
   });
 
   it('quem cai perto da costa consegue voltar nadando', () => {

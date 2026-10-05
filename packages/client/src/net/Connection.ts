@@ -16,8 +16,22 @@ export interface CloseInfo {
   wasOpen: boolean;
 }
 
+/**
+ * O que a partida precisa da conexão. Duas implementações falam o mesmo protocolo:
+ * `Connection` (WebSocket, multijogador) e `LocalConnection` (servidor na própria aba, solo).
+ */
+export interface GameConnection {
+  on<K extends ServerMessage['t']>(
+    type: K,
+    fn: (msg: Extract<ServerMessage, { t: K }>) => void,
+  ): this;
+  send(msg: ClientMessage): void;
+  close(): void;
+  onClose: (info: CloseInfo) => void;
+}
+
 /** WebSocket tipado: o cliente só fala o protocolo definido em @caranguejada/shared. */
-export class Connection {
+export class Connection implements GameConnection {
   private readonly ws: WebSocket;
   private readonly handlers: Handlers = {};
   private lastError: CloseInfo['error'] = null;
