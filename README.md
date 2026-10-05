@@ -81,7 +81,7 @@ e a predição do cliente.
   - **Manguezal**: lamaçal cortado por canais sinuosos, com água turva.
 - O dash serve para **fugir** (da enchente ou de alguém; rende igual nadando) e para encurtar a distância até um alvo, mas quem empurra é a **arma**. O tiro sai na direção apertada, então mirar importa; na água o empurrado desliza ainda mais longe.
 - Nadando, o caranguejo anda a **70%** da velocidade a pé e sempre escala para sair da água (beira de telhado, muralha ou casco não vira armadilha).
-- Na água o fôlego acaba em cerca de 7s (rasa) ou 4s (funda), o que dá tempo de voltar nadando se você cair perto da costa. Jogar alguém pra água funda afoga bem mais rápido.
+- **Só a água funda afoga.** Na rasa (até 1 de profundidade) o fôlego cai mas trava num mínimo: você fica fraco, nunca morto, e dá pra se arrastar na beirada e virar o jogo. Na funda o fôlego acaba em cerca de 4s. Por isso o que mata é **empurrar pro fundo** — jogar alguém no raso só o deixa sem fôlego pro próximo empurrão.
 - As ondas comem a areia na linha d'água.
 - Pontos: acertar alguém que se afoga em até 6s **+2**, último de pé **+5**. Eles só servem pra ordenar a tabela: quem vence é quem tem mais estrelas.
 - **Vence a rodada** o último sobrevivente. Se os últimos afundarem no mesmo instante, é **empate**: ninguém leva a estrela.
@@ -115,6 +115,7 @@ deploy/k8s/ manifests (kustomize)
 Pontos de arquitetura:
 
 - **Servidor autoritativo** a 30 ticks/s com passo fixo, enviando snapshots a 20/s. O cliente nunca decide resultado, só envia intenção (direção, mira e ações).
+- **Solo roda na sua máquina**: em "Jogar sozinho" a mesma classe `Room` é instanciada dentro da aba ([LocalConnection.ts](packages/client/src/net/LocalConnection.ts)), sem WebSocket nenhum. Latência zero (nada de reconciliação), funciona offline e as regras são idênticas — é o mesmo código, e os inputs passam pela mesma validação do protocolo.
 - **Predição + reconciliação**: o seu caranguejo responde na hora. Quando chega o snapshot, o cliente compara com a posição que _ele mesmo_ tinha quando o servidor aplicou aquele input (`ack` + `ackAge`) e corrige suavemente, assim a latência não vira tremedeira.
 - **Interpolação** dos outros jogadores com cerca de 100ms de atraso.
 - **Compensação de lag nos tiros**: você vê os outros um pouco no passado, então cada input leva o tempo de simulação que estava na sua tela (`vt`) e o servidor testa o tiro contra onde o alvo estava _naquele instante_ (até 0,3s de volta). Sem isso, tiro em quem se mexe "passava longe" mesmo parecendo certo.

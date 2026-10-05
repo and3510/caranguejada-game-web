@@ -56,6 +56,12 @@ export const CRAB = {
   breathDrain: 0.14,
   deepBreathDrain: 0.25,
   deepWater: 1,
+  /**
+   * Água rasa cansa mas nunca afoga: o fôlego para neste mínimo e só a água funda dá o
+   * golpe final. Dá pra se arrastar na beirada e virar o jogo (quem está rasteiro fica
+   * fraco, não morto).
+   */
+  shallowBreathFloor: 0.08,
   breathRegen: 0.7,
 } as const;
 

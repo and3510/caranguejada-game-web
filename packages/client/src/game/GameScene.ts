@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import {
   CLIENT_INPUT_RATE,
+  SNAPSHOT_RATE,
   CRAB,
   CRAB_COLORS,
   DAMAGE,
@@ -131,8 +132,14 @@ interface CrabRender {
 
 /** Atraso de interpolação: ~2 snapshots, absorve jitter de rede. */
 const INTERP_DELAY_MS = 100;
+/** Servidor local (solo): os snapshots chegam no relógio certo, basta um intervalo. */
+const LOCAL_INTERP_DELAY_MS = 1000 / SNAPSHOT_RATE + 5;
 const SEND_INTERVAL = 1 / CLIENT_INPUT_RATE;
-const MIN_SEND_INTERVAL = 1 / 30;
+/**
+ * Toque de ação (tiro, dash, pegar) não espera o próximo pacote: sai no dobro da taxa.
+ * Tira até ~17ms do caminho do tiro, sem dobrar o tráfego (só acontece quando se aperta algo).
+ */
+const MIN_SEND_INTERVAL = 1 / 60;
 const HIT_WORDS: Record<WeaponKind, readonly string[]> = {
   espingarda: ['BUM!', 'KABUM!', 'POW!'],
   revolver: ['BANG!', 'PEI!', 'PÁ!'],
@@ -565,7 +572,7 @@ export class GameScene extends Phaser.Scene {
     const { store } = this.deps;
     const snaps = store.snapshots;
     if (snaps.length === 0) return [];
-    const renderAt = now - INTERP_DELAY_MS;
+    const renderAt = now - (store.local ? LOCAL_INTERP_DELAY_MS : INTERP_DELAY_MS);
     let a = snaps[0]!;
     let b = snaps.at(-1)!;
     for (let i = snaps.length - 1; i > 0; i--) {

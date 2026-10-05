@@ -15,7 +15,8 @@ import {
 import { Sfx } from './game/audio';
 import { GameScene } from './game/GameScene';
 import { InputController } from './game/input';
-import { Connection } from './net/Connection';
+import { Connection, type GameConnection } from './net/Connection';
+import { LocalConnection } from './net/LocalConnection';
 import { Store, settings } from './state';
 import { Ui, renderMapsPicker, renderRoundsPicker, toggleMap } from './ui/ui';
 
@@ -27,7 +28,7 @@ input.onTouchMode = () => {
   if (conn) ui.render(store);
 };
 const sfx = new Sfx();
-let conn: Connection | null = null;
+let conn: GameConnection | null = null;
 
 // localStorage pode falhar (aba anônima, bloqueio de cookies): nunca é crítico.
 const storage = {
@@ -60,12 +61,18 @@ function connect(mode: JoinMode, code = randomRoomCode()): void {
   const open = (roomCode: string) => {
     // Quem entra numa sala existente usa o que o anfitrião escolheu.
     const setup = mode === 'entrar' ? {} : { rounds: menuRounds, maps: menuMaps };
-    const c = new Connection(roomCode, mode, name, setup);
+    // Solo roda o servidor aqui mesmo: sem rede, sem latência, e funciona offline.
+    const local = mode === 'solo';
+    const c: GameConnection = local
+      ? new LocalConnection(roomCode, name, setup)
+      : new Connection(roomCode, mode, name, setup);
     conn = c;
+    store.local = local;
     c.on('welcome', (m) => {
       store.you = m.you;
       store.code = m.code;
-      history.replaceState(null, '', `?sala=${m.code}`);
+      // Sala local não existe pra ninguém de fora: não vira link.
+      if (!local) history.replaceState(null, '', `?sala=${m.code}`);
       input.enabled = true;
       ui.setLobbyError('');
     })

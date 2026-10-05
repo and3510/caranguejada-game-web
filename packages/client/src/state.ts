@@ -35,6 +35,8 @@ export interface TimedSnapshot {
 export class Store {
   you = '';
   code = '';
+  /** Partida solo com o servidor na própria aba (sem rede: não dá pra convidar ninguém). */
+  local = false;
   phase: Phase = 'lobby';
   players: PlayerInfo[] = [];
   round = 0;
@@ -116,6 +118,7 @@ export class Store {
   reset(): void {
     this.you = '';
     this.code = '';
+    this.local = false;
     this.phase = 'lobby';
     this.players = [];
     this.terrain = null;

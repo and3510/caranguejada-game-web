@@ -201,7 +201,10 @@ export class Ui {
   }
 
   private renderLobby(store: Store): void {
+    // Solo roda na própria máquina: não há sala pra compartilhar.
     $('room-code').textContent = store.code;
+    this.lobby.querySelector('.room-title')!.classList.toggle('hidden', store.local);
+    this.btnCopy.classList.toggle('hidden', store.local);
     $('results').classList.toggle('hidden', store.phase !== 'matchEnd');
     // Com o resultado na tela, em celular deitado a placa vira duas colunas (CSS).
     this.lobby
