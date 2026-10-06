@@ -370,6 +370,9 @@ kbd {
 #hud {
   position: fixed;
   inset: 0;
+  /* Acima dos controles de toque (#touch, z-index 2): o painel de assistir, que fica
+     aqui dentro, ia parar embaixo do direcional. O HUD não bloqueia toque (abaixo). */
+  z-index: 3;
   pointer-events: none;
   font-size: 15px;
 }
