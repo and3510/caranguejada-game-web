@@ -26,6 +26,7 @@ import {
   type WeaponKind,
 } from '@caranguejada/shared';
 import { attractTerrain, settings, type Store } from '../state';
+import { blendBetween } from './interp';
 import type { Sfx } from './audio';
 import type { InputController } from './input';
 import {
@@ -130,8 +131,40 @@ interface CrabRender {
   name: string;
 }
 
+interface RocketView {
+  img: Phaser.GameObjects.Image;
+  smokeAt: number;
+  /** Erro (tiles) entre o palpite e o foguete do servidor; some suave, sem tranco. */
+  offX: number;
+  offY: number;
+}
+
+/**
+ * Foguete desenhado no instante do clique, antes de o servidor confirmar: só enfeite.
+ * Quando o foguete de verdade chega, este vira a imagem dele (sem dois foguetes na tela).
+ */
+interface GuessedRocket {
+  img: Phaser.GameObjects.Image;
+  x: number;
+  y: number;
+  dx: number;
+  dy: number;
+  start: number;
+  smokeAt: number;
+}
+
+/** Quanto tempo o erro do palpite leva pra sumir (s). */
+const ROCKET_BLEND_SECONDS = 0.2;
+/** Sem confirmação do servidor nesse tempo, o palpite some caladinho. */
+const ROCKET_GUESS_TIMEOUT_MS = 700;
+
 /** Atraso de interpolação: ~2 snapshots, absorve jitter de rede. */
 const INTERP_DELAY_MS = 100;
+/**
+ * Snapshot atrasado: segue o movimento por no máximo este tempo em vez de congelar.
+ * Curto de propósito — caranguejo muda de direção demais pra chutar muito à frente.
+ */
+const EXTRAPOLATE_MAX_MS = 150;
 /** Servidor local (solo): os snapshots chegam no relógio certo, basta um intervalo. */
 const LOCAL_INTERP_DELAY_MS = 1000 / SNAPSHOT_RATE + 5;
 const SEND_INTERVAL = 1 / CLIENT_INPUT_RATE;
@@ -167,11 +200,10 @@ export class GameScene extends Phaser.Scene {
   private readonly crabViews = new Map<string, CrabView>();
   private readonly weaponViews = new Map<number, Phaser.GameObjects.Image>();
   private readonly shots: Shot[] = [];
-  /** Foguetes da bazuca em voo. */
-  private readonly rocketViews = new Map<
-    number,
-    { img: Phaser.GameObjects.Image; smokeAt: number }
-  >();
+  /** Foguetes da bazuca em voo (do servidor). */
+  private readonly rocketViews = new Map<number, RocketView>();
+  /** Palpites de foguete já desenhados, esperando o servidor confirmar. */
+  private readonly guessedRockets: GuessedRocket[] = [];
   /** Caranguejos como estão na tela (a mira do tiro local usa essas posições). */
   private lastCrabs: CrabRender[] = [];
   /** Tempo do servidor que os outros caranguejos mostram na tela (compensação de lag). */
@@ -269,7 +301,7 @@ export class GameScene extends Phaser.Scene {
     this.lastCrabs = crabs;
     this.renderCrabs(crabs, terrain, level, dt);
     this.renderWeaponItems(terrain, level);
-    this.renderRockets(now);
+    this.renderRockets(now, dt);
     this.drawOverlay(crabs, terrain, level);
     this.updatePrompt();
     this.updateCamera(crabs, terrain, dt);
@@ -417,6 +449,8 @@ export class GameScene extends Phaser.Scene {
         };
       } else {
         this.startSwing(store.you, weapon, body.fx, body.fy, this.shotLength(weapon, body, others));
+        // O foguete sai do cano na hora: esperar o servidor faria ele "nascer" adiantado.
+        if (spec.style === 'rocket') this.guessRocket(body);
         this.localRecoil(body, body.fx, body.fy, spec.recoil);
       }
     }
@@ -582,18 +616,22 @@ export class GameScene extends Phaser.Scene {
         break;
       }
     }
-    const k = b.at === a.at ? 1 : Math.max(0, Math.min(1, (renderAt - a.at) / (b.at - a.at)));
-    this.viewTime = Math.round((a.time + (b.time - a.time) * k) * 1000) / 1000;
+    // Snapshot atrasado: segue o movimento um pouco em vez de congelar (ver interp.ts).
+    const { k, extra } = blendBetween(a.at, b.at, renderAt, EXTRAPOLATE_MAX_MS);
+    this.viewTime = Math.round((a.time + (b.time - a.time) * (k + extra)) * 1000) / 1000;
 
     const out: CrabRender[] = [];
     for (const cb of b.crabs.values()) {
       const ca = a.crabs.get(cb.id) ?? cb;
       const info = store.player(cb.id);
       const latest = store.latest()!.crabs.get(cb.id) ?? cb;
+      // Quem está voando de empurrão muda de direção demais: aí congelar erra menos
+      // que chutar, então ele não extrapola.
+      const kk = latest.stunned ? k : k + extra;
       const render: CrabRender = {
         id: cb.id,
-        x: ca.x + (cb.x - ca.x) * k,
-        y: ca.y + (cb.y - ca.y) * k,
+        x: ca.x + (cb.x - ca.x) * kk,
+        y: ca.y + (cb.y - ca.y) * kk,
         fx: cb.fx,
         fy: cb.fy,
         alive: latest.alive,
@@ -1047,7 +1085,21 @@ export class GameScene extends Phaser.Scene {
   }
 
   /** Foguetes em voo: posição do servidor, empurrada pra frente pelo tempo desde o snapshot. */
-  private renderRockets(now: number): void {
+  /** Palpite local do foguete: mesma posição, direção e velocidade que o servidor vai usar. */
+  private guessRocket(body: Body): void {
+    const start = CRAB.radius + 0.35;
+    this.guessedRockets.push({
+      img: this.rotatingImage('rocket'),
+      x: body.x + body.fx * start,
+      y: body.y + body.fy * start,
+      dx: body.fx,
+      dy: body.fy,
+      start: performance.now(),
+      smokeAt: 0,
+    });
+  }
+
+  private renderRockets(now: number, dt: number): void {
     const { store } = this.deps;
     const since = Math.min(0.15, (now - (store.latest()?.at ?? now)) / 1000);
     const ids = new Set<number>();
@@ -1055,11 +1107,22 @@ export class GameScene extends Phaser.Scene {
       ids.add(r.id);
       let view = this.rocketViews.get(r.id);
       if (!view) {
-        view = { img: this.rotatingImage('rocket'), smokeAt: 0 };
+        // Foguete meu que eu já estava desenhando? Então o palpite vira este foguete,
+        // e o errinho de posição (o tempo que o clique levou pra subir) some suave.
+        const guess = r.owner === store.you ? this.guessedRockets.shift() : undefined;
+        view = {
+          img: guess?.img ?? this.rotatingImage('rocket'),
+          smokeAt: guess?.smokeAt ?? 0,
+          offX: guess ? guess.x - r.x : 0,
+          offY: guess ? guess.y - r.y : 0,
+        };
         this.rocketViews.set(r.id, view);
       }
-      const x = (r.x + r.dx * WEAPON_RULES.rocketSpeed * since) * TILE;
-      const y = (r.y + r.dy * WEAPON_RULES.rocketSpeed * since) * TILE;
+      const fade = Math.exp(-dt / ROCKET_BLEND_SECONDS);
+      view.offX *= fade;
+      view.offY *= fade;
+      const x = (r.x + view.offX + r.dx * WEAPON_RULES.rocketSpeed * since) * TILE;
+      const y = (r.y + view.offY + r.dy * WEAPON_RULES.rocketSpeed * since) * TILE;
       view.img.setPosition(x, y).setRotation(Math.atan2(r.dy, r.dx)).setDepth(9_400);
       if (now >= view.smokeAt) {
         // Rastro de fumaça atrás do foguete.
@@ -1072,11 +1135,35 @@ export class GameScene extends Phaser.Scene {
       view.img.destroy();
       this.rocketViews.delete(id);
     }
+    this.renderGuessedRockets(now, dt);
+  }
+
+  /** Palpites ainda não confirmados: voam sozinhos e somem se o servidor não trouxer nada. */
+  private renderGuessedRockets(now: number, dt: number): void {
+    for (let i = this.guessedRockets.length - 1; i >= 0; i--) {
+      const g = this.guessedRockets[i]!;
+      if (now - g.start > ROCKET_GUESS_TIMEOUT_MS) {
+        g.img.destroy();
+        this.guessedRockets.splice(i, 1);
+        continue;
+      }
+      g.x += g.dx * WEAPON_RULES.rocketSpeed * dt;
+      g.y += g.dy * WEAPON_RULES.rocketSpeed * dt;
+      const px = g.x * TILE;
+      const py = g.y * TILE;
+      g.img.setPosition(px, py).setRotation(Math.atan2(g.dy, g.dx)).setDepth(9_400);
+      if (now >= g.smokeAt) {
+        g.smokeAt = now + 35;
+        this.puff(px - g.dx * 5, py - g.dy * 5, 0xd8d2c4, 2, 3);
+      }
+    }
   }
 
   private clearRockets(): void {
     for (const view of this.rocketViews.values()) view.img.destroy();
     this.rocketViews.clear();
+    for (const g of this.guessedRockets) g.img.destroy();
+    this.guessedRockets.length = 0;
   }
 
   /**

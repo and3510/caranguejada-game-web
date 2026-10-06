@@ -951,6 +951,13 @@ export class Simulation {
 
   rocketSnapshots(): RocketSnapshot[] {
     const r = (v: number) => Math.round(v * 100) / 100;
-    return this.rockets.map((k) => ({ id: k.id, x: r(k.x), y: r(k.y), dx: r(k.dx), dy: r(k.dy) }));
+    return this.rockets.map((k) => ({
+      id: k.id,
+      x: r(k.x),
+      y: r(k.y),
+      dx: r(k.dx),
+      dy: r(k.dy),
+      owner: k.owner,
+    }));
   }
 }
