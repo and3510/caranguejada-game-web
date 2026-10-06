@@ -26,7 +26,6 @@ import {
   type WeaponKind,
 } from '@caranguejada/shared';
 import { attractTerrain, settings, type Store } from '../state';
-import { blendBetween } from './interp';
 import type { Sfx } from './audio';
 import type { InputController } from './input';
 import {
@@ -162,11 +161,6 @@ const ROCKET_GUESS_TIMEOUT_MS = 700;
 
 /** Atraso de interpolação: ~2 snapshots, absorve jitter de rede. */
 const INTERP_DELAY_MS = 100;
-/**
- * Snapshot atrasado: segue o movimento por no máximo este tempo em vez de congelar.
- * Curto de propósito — caranguejo muda de direção demais pra chutar muito à frente.
- */
-const EXTRAPOLATE_MAX_MS = 150;
 /** Servidor local (solo): os snapshots chegam no relógio certo, basta um intervalo. */
 const LOCAL_INTERP_DELAY_MS = 1000 / SNAPSHOT_RATE + 5;
 const SEND_INTERVAL = 1 / CLIENT_INPUT_RATE;
@@ -619,22 +613,21 @@ export class GameScene extends Phaser.Scene {
         break;
       }
     }
-    // Snapshot atrasado: segue o movimento um pouco em vez de congelar (ver interp.ts).
-    const { k, extra } = blendBetween(a.at, b.at, renderAt, EXTRAPOLATE_MAX_MS);
-    this.viewTime = Math.round((a.time + (b.time - a.time) * (k + extra)) * 1000) / 1000;
+    // Só interpola entre dois snapshots que já chegaram: nada de chutar onde o outro
+    // "deveria" estar. Se um snapshot atrasa, o caranguejo espera parado — é feio por um
+    // instante, mas não desliza pro lugar errado e volta.
+    const k = b.at === a.at ? 1 : Math.max(0, Math.min(1, (renderAt - a.at) / (b.at - a.at)));
+    this.viewTime = Math.round((a.time + (b.time - a.time) * k) * 1000) / 1000;
 
     const out: CrabRender[] = [];
     for (const cb of b.crabs.values()) {
       const ca = a.crabs.get(cb.id) ?? cb;
       const info = store.player(cb.id);
       const latest = store.latest()!.crabs.get(cb.id) ?? cb;
-      // Quem está voando de empurrão muda de direção demais: aí congelar erra menos
-      // que chutar, então ele não extrapola.
-      const kk = latest.stunned ? k : k + extra;
       const render: CrabRender = {
         id: cb.id,
-        x: ca.x + (cb.x - ca.x) * kk,
-        y: ca.y + (cb.y - ca.y) * kk,
+        x: ca.x + (cb.x - ca.x) * k,
+        y: ca.y + (cb.y - ca.y) * k,
         fx: cb.fx,
         fy: cb.fy,
         alive: latest.alive,
