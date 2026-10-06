@@ -378,6 +378,12 @@ export class Ui {
     this.renderWeaponSlot(info);
     const watching = info.spectating;
     $('spectate').classList.toggle('hidden', watching === null);
+    // Morto, o direcional e os botões não servem mais — e tapavam os botões de trocar
+    // de câmera no celular em pé. Some com eles e deixa só o painel de assistir.
+    this.touch.classList.toggle(
+      'hidden',
+      this.touch.dataset.enabled !== 'true' || store.phase !== 'playing' || watching !== null,
+    );
     if (watching !== null && $('spectate-name').textContent !== watching) {
       $('spectate-name').textContent = watching;
     }
