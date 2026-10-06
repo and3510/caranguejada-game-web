@@ -34,6 +34,13 @@
         background: #1f4e6b;
       }
 
+      /* Também mora no style.css do pacote: sem isto a placa nascia mais larga (o padding
+         somava por fora) e encolhia quando o estilo chegava. */
+      .splash,
+      .splash * {
+        box-sizing: border-box;
+      }
+
       /*
        * Cobre tudo enquanto o jogo monta por baixo (Phaser, fontes, a ilha do menu). Quando
        * fica pronto, some num fade e o menu — que já estava ali atrás — aparece.
@@ -132,25 +139,24 @@
        * fatia sem os caranguejos. Mostra a arte inteira e preenche o resto com uma cópia
        * desfocada dela mesma — sem baixar imagem nenhuma a mais.
        */
+      /*
+       * Tela em pé: a arte é deitada e, esticada pra cobrir tudo, perderia os caranguejos.
+       * Então ela fica inteira no alto e a água dela simplesmente continua até embaixo —
+       * a borda inferior da imagem é uma cor chapada (#1b3e62), então não há emenda.
+       */
       @media (max-aspect-ratio: 13 / 10) {
-        .splash::before {
-          content: '';
-          position: absolute;
-          inset: 0;
-          background: url('/capa.webp') center / cover no-repeat;
-          filter: blur(22px) brightness(0.6);
-          transform: scale(1.15);
+        .splash {
+          background: linear-gradient(180deg, #1b3e62 0%, #15324f 100%);
+          /* A arte ocupa 56vw de altura (é a proporção dela); a placa fica centrada
+             na água que sobra, em vez de colada embaixo com um vão enorme no meio. */
+          justify-content: center;
+          padding-top: 56vw;
         }
-        /*
-         * A imagem fica com a altura da própria proporção (não esticada na tela toda), pra
-         * borda dissolvida abaixo cair em cima da arte de verdade, e não de espaço vazio.
-         */
         .splash-art {
-          inset: auto 0 auto 0;
-          top: 42%;
+          inset: 0 0 auto 0;
           height: auto;
-          transform: translateY(-50%);
-          mask-image: linear-gradient(180deg, transparent 0, #000 12%, #000 88%, transparent 100%);
+          transform: none;
+          mask-image: none;
         }
       }
 
