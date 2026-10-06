@@ -47,6 +47,8 @@ export interface SceneDeps {
   send: (msg: InputMessage) => void;
   /** Chamado a cada quadro com dados para o HUD. */
   onFrame: (info: FrameInfo) => void;
+  /** Cena montada (texturas prontas): a tela de abertura pode sair. */
+  onReady?: () => void;
 }
 
 export interface FrameInfo {
@@ -262,6 +264,7 @@ export class GameScene extends Phaser.Scene {
       .setVisible(false);
 
     this.setupDemo();
+    this.deps.onReady?.();
   }
 
   // ------------------------------------------------------------------ loop

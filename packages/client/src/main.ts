@@ -287,13 +287,47 @@ const scene = new GameScene({
   sfx,
   send: (msg) => conn?.send(msg),
   onFrame: (info) => ui.frame(store, info, (final) => sfx.countdown(final)),
+  onReady: () => sceneReady(),
 });
 
 // Botões ◀ ▶ de quem já caiu (celular/tablet): trocam quem a câmera acompanha.
 document.getElementById('spectate-prev')?.addEventListener('click', () => scene.spectateStep(-1));
 document.getElementById('spectate-next')?.addEventListener('click', () => scene.spectateStep(1));
 
+// ---------------------------------------------------------------- tela de abertura
+
+const splash = document.getElementById('splash')!;
+let sceneReady = () => {};
+/** Resolve quando a cena terminou de montar (ou quando o tempo acaba: nunca prende o jogador). */
+const scenePronta = new Promise<void>((resolve) => {
+  sceneReady = resolve;
+  setTimeout(resolve, 8000);
+});
+
+function splashStep(pct: number, texto: string): void {
+  document.getElementById('splash-fill')!.style.width = `${pct}%`;
+  document.getElementById('splash-step')!.textContent = texto;
+}
+
+function esperaQuadros(n: number): Promise<void> {
+  return new Promise((resolve) => {
+    const passo = (faltam: number) =>
+      faltam <= 0 ? resolve() : requestAnimationFrame(() => passo(faltam - 1));
+    passo(n);
+  });
+}
+
+async function fechaSplash(): Promise<void> {
+  splashStep(100, 'pronto!');
+  // Um respiro pra barra encher na tela antes do fade (senão ela pula de 55% pro fim).
+  await new Promise((r) => setTimeout(r, 260));
+  splash.classList.add('gone');
+  await new Promise((r) => setTimeout(r, 450));
+  splash.classList.add('hidden');
+}
+
 async function boot(): Promise<void> {
+  splashStep(20, 'buscando as fontes…');
   // Textos do Phaser usam a fonte pixelada: espera carregar (com teto de tempo).
   await Promise.race([
     Promise.all([
@@ -303,6 +337,7 @@ async function boot(): Promise<void> {
     new Promise((resolve) => setTimeout(resolve, 1500)),
   ]).catch(() => undefined);
 
+  splashStep(55, 'montando a ilha…');
   new Phaser.Game({
     type: Phaser.AUTO,
     parent: 'game',
@@ -315,6 +350,13 @@ async function boot(): Promise<void> {
     scene: [scene],
   });
   ui.showMenu();
+
+  // Só sai da capa quando a cena montou e já desenhou alguns quadros: assim o menu
+  // aparece com a ilha de fundo já rodando, em vez de piscar uma tela vazia.
+  await scenePronta;
+  splashStep(85, 'soltando os caranguejos…');
+  await esperaQuadros(3);
+  await fechaSplash();
 }
 
 void boot();

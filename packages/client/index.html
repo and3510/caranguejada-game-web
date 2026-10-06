@@ -13,6 +13,154 @@
     <meta name="theme-color" content="#1f4e6b" />
     <title>Caranguejada</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <!-- A capa é a primeira coisa que aparece: busca ela na frente de tudo. -->
+    <link rel="preload" as="image" href="/capa.webp" fetchpriority="high" />
+
+    <style>
+      /*
+       * Tela de abertura. Fica embutida aqui de propósito: ela precisa estar pronta já na
+       * primeira pintura. Se dependesse do style.css do pacote, apareceria um pedaço solto
+       * antes de o estilo chegar — e o salto era visível justamente em conexão lenta, que é
+       * quando essa tela mais importa. Por isso as cores estão escritas por extenso.
+       */
+
+      /* Mesmo motivo: sem isto a barra de rolagem aparecia (a tela toda pulava uns 15px)
+         e piscava branco antes da capa chegar. */
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #1f4e6b;
+      }
+
+      /*
+       * Cobre tudo enquanto o jogo monta por baixo (Phaser, fontes, a ilha do menu). Quando
+       * fica pronto, some num fade e o menu — que já estava ali atrás — aparece.
+       */
+      .splash {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-end;
+        padding: 0 16px max(28px, env(safe-area-inset-bottom));
+        background: #1f4e6b;
+        transition: opacity 420ms ease;
+      }
+
+      .splash-art {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        /* Escurece o pé da arte pra placa do título ficar legível por cima. */
+        mask-image: linear-gradient(180deg, #000 55%, rgba(0, 0, 0, 0.55) 100%);
+      }
+
+      /* Placa de madeira, igual às do resto do jogo. */
+      /*
+       * Altura reservada: as fontes vêm do Google e chegam depois da primeira pintura.
+       * Sem isto a placa nascia menor (texto na fonte de reserva) e crescia quando a
+       * Silkscreen chegava — o "quadrado que se ajeita" que dava pra ver.
+       */
+      .splash-box {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        width: min(460px, 100%);
+        min-height: 164px;
+        padding: 18px 22px 16px;
+        text-align: center;
+        background: #f2dfb4;
+        border: 3px solid #2b1d14;
+        box-shadow: 4px 4px 0 #2b1d14;
+        transform: rotate(-0.6deg);
+      }
+
+      .splash-title {
+        margin: 0;
+        line-height: 1.2;
+        min-height: 1.2em;
+        font-family: 'Silkscreen', ui-monospace, monospace;
+        font-size: clamp(26px, 7vw, 38px);
+        font-weight: 400;
+        letter-spacing: 1px;
+        color: #d9573b;
+        text-shadow: 3px 3px 0 #2b1d14;
+      }
+
+      .splash-tagline {
+        margin: 8px 0 14px;
+        font-size: 15px;
+        line-height: 1.35;
+        min-height: 2.7em;
+      }
+
+      .splash-bar {
+        height: 14px;
+        background: #f4efe6;
+        border: 3px solid #2b1d14;
+      }
+
+      #splash-fill {
+        width: 8%;
+        height: 100%;
+        background: #d9573b;
+        transition: width 300ms ease;
+      }
+
+      .splash-step {
+        margin: 8px 0 0;
+        font-family: 'Silkscreen', ui-monospace, monospace;
+        font-size: 10px;
+        opacity: 0.75;
+      }
+
+      /* Carregou: some de vez (o `hidden` entra depois do fade, pelo main.ts). */
+      .splash.gone {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      /*
+       * Tela em pé: a arte é deitada (16:9) e o `cover` cortaria quase tudo, sobrando uma
+       * fatia sem os caranguejos. Mostra a arte inteira e preenche o resto com uma cópia
+       * desfocada dela mesma — sem baixar imagem nenhuma a mais.
+       */
+      @media (max-aspect-ratio: 13 / 10) {
+        .splash::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          background: url('/capa.webp') center / cover no-repeat;
+          filter: blur(22px) brightness(0.6);
+          transform: scale(1.15);
+        }
+        /*
+         * A imagem fica com a altura da própria proporção (não esticada na tela toda), pra
+         * borda dissolvida abaixo cair em cima da arte de verdade, e não de espaço vazio.
+         */
+        .splash-art {
+          inset: auto 0 auto 0;
+          top: 42%;
+          height: auto;
+          transform: translateY(-50%);
+          mask-image: linear-gradient(180deg, transparent 0, #000 12%, #000 88%, transparent 100%);
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .splash,
+        #splash-fill {
+          transition: none;
+        }
+      }
+    </style>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -22,6 +170,21 @@
   </head>
   <body>
     <div id="game"></div>
+
+    <!-- Tela de abertura: cobre tudo enquanto o jogo carrega por baixo e sai no fim. -->
+    <section id="splash" class="splash" aria-label="Carregando o jogo">
+      <img class="splash-art" src="/capa.webp" alt="" fetchpriority="high" />
+      <div class="splash-box">
+        <h1 class="splash-title">Caranguejada</h1>
+        <p class="splash-tagline">
+          a água tá subindo. pega uma arma e derruba quem tiver na beirada.
+        </p>
+        <div class="splash-bar" role="progressbar" aria-label="Carregando">
+          <div id="splash-fill"></div>
+        </div>
+        <p id="splash-step" class="splash-step">carregando…</p>
+      </div>
+    </section>
 
     <!-- Menu inicial -->
     <section id="menu" class="screen">
