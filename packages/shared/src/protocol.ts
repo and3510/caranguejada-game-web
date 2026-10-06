@@ -56,6 +56,8 @@ export interface RocketSnapshot {
   y: number;
   dx: number;
   dy: number;
+  /** Quem atirou: o cliente usa pra casar o foguete com o palpite que já desenhou. */
+  owner: string;
 }
 
 export interface WeaponItemSnapshot {
