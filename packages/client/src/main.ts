@@ -296,6 +296,13 @@ document.getElementById('spectate-next')?.addEventListener('click', () => scene.
 
 // ---------------------------------------------------------------- tela de abertura
 
+/**
+ * Tempo mínimo que a capa fica na tela, contado de quando a arte aparece de verdade.
+ * Em internet rápida tudo carrega em menos de meio segundo e a capa sumia antes de dar
+ * pra ver a ilustração — então a parada é obrigatória, mesmo que o jogo já esteja pronto.
+ */
+const CAPA_MINIMO_MS = 1900;
+
 const splash = document.getElementById('splash')!;
 let sceneReady = () => {};
 /** Resolve quando a cena terminou de montar (ou quando o tempo acaba: nunca prende o jogador). */
@@ -304,9 +311,42 @@ const scenePronta = new Promise<void>((resolve) => {
   setTimeout(resolve, 8000);
 });
 
+/** Resolve quando a imagem da capa já está pintada (ou falhou, ou demorou demais). */
+const artePronta = new Promise<void>((resolve) => {
+  const img = document.querySelector<HTMLImageElement>('.splash-art');
+  if (!img || (img.complete && img.naturalWidth > 0)) return resolve();
+  img.addEventListener('load', () => resolve(), { once: true });
+  img.addEventListener('error', () => resolve(), { once: true });
+  setTimeout(resolve, 4000);
+});
+
+let progressoReal = 0;
+let arteDesde = 0;
+
+/** Quando a imagem da capa terminou de baixar (o navegador guarda isso), ou agora. */
+function chegadaDaArte(): number {
+  const url = new URL('/capa.webp', location.href).href;
+  const [entrada] = performance.getEntriesByName(url, 'resource') as PerformanceResourceTiming[];
+  return entrada ? entrada.responseEnd : performance.now();
+}
+
 function splashStep(pct: number, texto: string): void {
-  document.getElementById('splash-fill')!.style.width = `${pct}%`;
+  progressoReal = pct;
   document.getElementById('splash-step')!.textContent = texto;
+}
+
+/**
+ * A barra anda no menor entre o carregamento de verdade e o relógio da parada obrigatória:
+ * assim ela nunca pula de 20% pro fim nem fica cheia esperando o tempo passar.
+ */
+function animaBarra(): void {
+  const fill = document.getElementById('splash-fill')!;
+  const passo = () => {
+    const relogio = arteDesde ? ((performance.now() - arteDesde) / CAPA_MINIMO_MS) * 100 : 0;
+    fill.style.width = `${Math.max(6, Math.min(progressoReal, relogio))}%`;
+    if (!splash.classList.contains('hidden')) requestAnimationFrame(passo);
+  };
+  requestAnimationFrame(passo);
 }
 
 function esperaQuadros(n: number): Promise<void> {
@@ -317,16 +357,25 @@ function esperaQuadros(n: number): Promise<void> {
   });
 }
 
+const espera = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 async function fechaSplash(): Promise<void> {
   splashStep(100, 'pronto!');
-  // Um respiro pra barra encher na tela antes do fade (senão ela pula de 55% pro fim).
-  await new Promise((r) => setTimeout(r, 260));
+  // Cumpre a parada obrigatória e deixa a barra chegar no fim antes de sumir.
+  const falta = CAPA_MINIMO_MS - (performance.now() - arteDesde);
+  await espera(Math.max(180, falta));
   splash.classList.add('gone');
-  await new Promise((r) => setTimeout(r, 450));
+  await espera(450);
   splash.classList.add('hidden');
 }
 
 async function boot(): Promise<void> {
+  // O relógio da capa começa quando a arte chega na tela, não quando este código roda:
+  // o pacote de JS pode demorar, e a capa já estava sendo vista esse tempo todo.
+  await artePronta;
+  arteDesde = chegadaDaArte();
+  animaBarra();
+
   splashStep(20, 'buscando as fontes…');
   // Textos do Phaser usam a fonte pixelada: espera carregar (com teto de tempo).
   await Promise.race([
