@@ -10,6 +10,12 @@ export const CLIENT_INPUT_RATE = 30;
 export const MAP_WIDTH = 40;
 export const MAP_HEIGHT = 28;
 export const MAX_TILE_HEIGHT = 9;
+/**
+ * O "refúgio" final: estes tiles do topo (altura máxima) nunca alagam nem se destroem.
+ * A maré sobe como sempre, mas é limitada logo abaixo da altura máxima, então no fim de
+ * tudo sobram exatamente estes blocos — é onde a inundação "fecha" e a briga final acontece.
+ */
+export const FINAL_REFUGE_TILES = 8;
 /** Diferença de altura que um caranguejo não consegue escalar a pé. */
 export const CLIFF_HEIGHT = 3;
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CLIFF_HEIGHT,
   CRAB,
+  FINAL_REFUGE_TILES,
   MAP_HEIGHT,
   MAP_KINDS,
   MAP_WIDTH,
@@ -16,6 +17,7 @@ import {
   generateTerrain,
   heightAt,
   isBlocked,
+  isDry,
   isValidRoomCode,
   landRatio,
   lastLand,
@@ -25,6 +27,7 @@ import {
   sanitizeName,
   stepBody,
   tideLevel,
+  tideSpeed,
   type Terrain,
 } from '../src';
 
@@ -45,21 +48,53 @@ describe('terrain', () => {
     );
   });
 
-  it.each(MAP_KINDS)('mapa %s: termina num único ponto, alcançável a pé', (kind) => {
+  it.each(MAP_KINDS)('mapa %s: termina num refúgio de 8 blocos juntos, alcançável a pé', (kind) => {
     for (let seed = 0; seed < 15; seed++) {
       const t = generateTerrain(seed * 97 + 1, kind);
-      const peaks = t.heights.filter((h) => h === MAX_TILE_HEIGHT);
-      expect(peaks).toHaveLength(1);
+      const top: number[] = [];
+      for (let i = 0; i < t.heights.length; i++) if (t.heights[i] === MAX_TILE_HEIGHT) top.push(i);
+      expect(top).toHaveLength(FINAL_REFUGE_TILES);
+
+      // Um bloco só: todos alcançáveis uns dos outros andando pelos vizinhos (4 direções).
+      const set = new Set(top);
+      const seen = new Set<number>([top[0]!]);
+      const stack = [top[0]!];
+      while (stack.length > 0) {
+        const c = stack.pop()!;
+        const x = c % t.width;
+        const y = Math.floor(c / t.width);
+        for (const [nx, ny] of [
+          [x + 1, y],
+          [x - 1, y],
+          [x, y + 1],
+          [x, y - 1],
+        ] as const) {
+          const ni = ny * t.width + nx;
+          if (nx >= 0 && ny >= 0 && nx < t.width && ny < t.height && set.has(ni) && !seen.has(ni)) {
+            seen.add(ni);
+            stack.push(ni);
+          }
+        }
+      }
+      expect(seen.size).toBe(FINAL_REFUGE_TILES);
+
+      // Dá pra subir até o refúgio sem paredão: algum vizinho de fora do bloco é transponível.
+      const outside = top.flatMap((c) => {
+        const x = c % t.width;
+        const y = Math.floor(c / t.width);
+        return [
+          [x + 1, y],
+          [x - 1, y],
+          [x, y + 1],
+          [x, y - 1],
+        ]
+          .filter(([nx, ny]) => !set.has(ny! * t.width + nx!))
+          .map(([nx, ny]) => heightAt(t, nx!, ny!));
+      });
+      expect(Math.max(...outside)).toBeGreaterThan(MAX_TILE_HEIGHT - CLIFF_HEIGHT);
+      // lastLand continua apontando pra um deles.
       const { tx, ty } = lastLand(t);
       expect(heightAt(t, tx, ty)).toBe(MAX_TILE_HEIGHT);
-      // Algum vizinho permite subir sem paredão.
-      const neighbors = [
-        [tx + 1, ty],
-        [tx - 1, ty],
-        [tx, ty + 1],
-        [tx, ty - 1],
-      ].map(([x, y]) => heightAt(t, x!, y!));
-      expect(Math.max(...neighbors)).toBeGreaterThan(MAX_TILE_HEIGHT - CLIFF_HEIGHT);
     }
   });
 
@@ -85,7 +120,10 @@ describe('terrain', () => {
       expect(land(lvl)).toBeLessThan(land(lvl - 1));
       expect(land(lvl)).toBeGreaterThan(0);
     }
-    expect(land(8)).toBeLessThanOrEqual(7);
+    // O anel de altura 8 (6 tiles) cerca o refúgio (8 tiles de altura máxima).
+    expect(land(8)).toBeLessThanOrEqual(FINAL_REFUGE_TILES + 6);
+    // No fim sobra só o refúgio.
+    expect(land(MAX_TILE_HEIGHT)).toBe(FINAL_REFUGE_TILES);
   });
 
   it.each(MAP_KINDS)(
@@ -119,10 +157,18 @@ describe('terrain', () => {
 });
 
 describe('tide', () => {
-  it('só sobe, e cada vez mais rápido', () => {
+  /** Instante em que a água chega no teto. */
+  const tempoDoTeto = () => {
+    let t = 0;
+    while (tideLevel(t) < TIDE.maxLevel && t < 600) t += 0.05;
+    return t;
+  };
+
+  it('só sobe e cada vez mais rápido, até chegar no teto', () => {
+    const fim = tempoDoTeto();
     let prev = tideLevel(0);
     let prevRise = 0;
-    for (let t = 1; t <= 90; t++) {
+    for (let t = 1; t < fim - 1; t++) {
       const level = tideLevel(t);
       expect(level).toBeGreaterThan(prev);
       expect(level - prev).toBeGreaterThan(prevRise);
@@ -131,10 +177,36 @@ describe('tide', () => {
     }
   });
 
-  it('cobre o tile mais alto em menos de um minuto', () => {
+  it('o ritmo da subida é exatamente o de sempre (só ganhou um teto no fim)', () => {
+    for (const t of [0, 5, 15, 25, 33]) {
+      expect(tideLevel(t)).toBeCloseTo(
+        TIDE.base + TIDE.risePerSecond * t + TIDE.acceleration * t * t,
+        9,
+      );
+    }
+  });
+
+  it('para no teto, logo abaixo da altura máxima: o refúgio nunca alaga', () => {
+    expect(TIDE.maxLevel).toBeLessThan(MAX_TILE_HEIGHT);
+    expect(TIDE.maxLevel).toBeGreaterThan(MAX_TILE_HEIGHT - 1);
+    const fim = tempoDoTeto();
+    for (const extra of [0, 1, 10, 100, 1000]) {
+      expect(tideLevel(fim + extra)).toBe(TIDE.maxLevel);
+    }
+    expect(tideSpeed(fim + 5)).toBe(0);
+    expect(tideSpeed(10)).toBeGreaterThan(0);
+  });
+
+  it('todo o resto da ilha ainda some: o teto cobre tudo menos a altura máxima', () => {
+    // Um tile de altura 8 fica debaixo d'água; um de altura 9 continua seco.
+    expect(isDry(MAX_TILE_HEIGHT - 1, TIDE.maxLevel)).toBe(false);
+    expect(isDry(MAX_TILE_HEIGHT, TIDE.maxLevel)).toBe(true);
+  });
+
+  it('a água chega no teto em cerca de 35s (mesmo ritmo de antes)', () => {
     expect(tideLevel(0)).toBeCloseTo(TIDE.base);
     expect(tideLevel(20)).toBeLessThan(MAX_TILE_HEIGHT / 2);
-    expect(tideLevel(45)).toBeGreaterThan(MAX_TILE_HEIGHT);
+    expect(tempoDoTeto()).toBeLessThan(40);
   });
 });
 

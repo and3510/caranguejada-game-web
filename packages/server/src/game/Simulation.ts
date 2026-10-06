@@ -3,6 +3,7 @@ import {
   DAMAGE,
   EROSION,
   LAG_HISTORY_SECONDS,
+  MAX_TILE_HEIGHT,
   MAX_LAG_COMP_SECONDS,
   ROUND_HARD_LIMIT_SECONDS,
   SCORE,
@@ -631,7 +632,8 @@ export class Simulation {
         if (tx < 0 || ty < 0 || tx >= this.terrain.width || ty >= this.terrain.height) continue;
         const i = ty * this.terrain.width + tx;
         const h = this.terrain.heights[i] ?? 0;
-        if (h === 0) continue;
+        // O refúgio final (altura máxima) é indestrutível: nem a bazuca derruba.
+        if (h === 0 || h >= MAX_TILE_HEIGHT) continue;
         const center = tx === cx && ty === cy;
         const depth = center ? WEAPON_RULES.craterCenterDepth : WEAPON_RULES.craterRingDepth;
         this.terrain.heights[i] = Math.max(0, h - depth);
@@ -749,7 +751,8 @@ export class Simulation {
       for (let tx = 0; tx < width; tx++) {
         const i = ty * width + tx;
         const h = heights[i] ?? 0;
-        if (h === 0 || h < level || h >= level + EROSION.band) continue;
+        // Altura máxima = refúgio final: as ondas não comem.
+        if (h === 0 || h >= MAX_TILE_HEIGHT || h < level || h >= level + EROSION.band) continue;
         if (!wet(tx - 1, ty) && !wet(tx + 1, ty) && !wet(tx, ty - 1) && !wet(tx, ty + 1)) continue;
         if (this.rng() >= EROSION.chance) continue;
         heights[i] = h - 1;

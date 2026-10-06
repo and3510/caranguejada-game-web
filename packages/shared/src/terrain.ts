@@ -1,4 +1,10 @@
-import { CLIFF_HEIGHT, MAP_HEIGHT, MAP_WIDTH, MAX_TILE_HEIGHT } from './constants';
+import {
+  CLIFF_HEIGHT,
+  FINAL_REFUGE_TILES,
+  MAP_HEIGHT,
+  MAP_WIDTH,
+  MAX_TILE_HEIGHT,
+} from './constants';
 import { createRng, type Rng } from './rng';
 
 export interface Terrain {
@@ -576,23 +582,72 @@ function shapeFloodPath(terrain: Terrain, seed: number, shapeWeight: number): vo
     { height: 3, share: 0.16 },
     { height: 2, share: 0.18 },
   ];
-  let cursor = 1;
+  // O refúgio final: FINAL_REFUGE_TILES tiles de altura máxima (a única que a maré nunca
+  // cobre), num bloco só. Cresce a partir do melhor tile, sempre pegando o vizinho de terra
+  // mais bem ranqueado — assim a briga final acontece num lugar só, não em ilhotas soltas.
+  const rank = new Map<number, number>();
+  land.forEach((t, r) => rank.set(t.i, r));
+  const refuge = new Set<number>();
+  if (land.length > 0) {
+    refuge.add(land[0]!.i);
+    while (refuge.size < FINAL_REFUGE_TILES) {
+      let next = -1;
+      let nextRank = Infinity;
+      for (const i of refuge) {
+        const x = i % width;
+        const y = Math.floor(i / width);
+        for (const [nx, ny] of [
+          [x + 1, y],
+          [x - 1, y],
+          [x, y + 1],
+          [x, y - 1],
+        ] as const) {
+          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+          const ni = ny * width + nx;
+          const r = rank.get(ni);
+          if (r !== undefined && !refuge.has(ni) && r < nextRank) {
+            next = ni;
+            nextRank = r;
+          }
+        }
+      }
+      if (next < 0) break; // ilhota pequena demais: completa abaixo pelo ranking
+      refuge.add(next);
+    }
+  }
+  for (const i of refuge) heights[i] = MAX_TILE_HEIGHT;
+
+  // O resto, por ranking, pulando o refúgio (que já tem a altura dele).
+  let cursor = 0;
   const assign = (count: number, h: number) => {
-    for (let k = 0; k < count && cursor < land.length; k++) heights[land[cursor++]!.i] = h;
+    for (let k = 0; k < count && cursor < land.length;) {
+      const i = land[cursor++]!.i;
+      if (refuge.has(i)) continue;
+      heights[i] = h;
+      k++;
+    }
   };
+  // Se o crescimento ficou sem vizinhos, completa o refúgio com os melhores do ranking.
+  while (refuge.size < Math.min(FINAL_REFUGE_TILES, land.length)) {
+    const i = land[cursor++]!.i;
+    if (!refuge.has(i)) {
+      refuge.add(i);
+      heights[i] = MAX_TILE_HEIGHT;
+    }
+  }
   assign(6, 8);
   for (const band of bands.slice(1)) assign(Math.round(land.length * band.share), band.height);
   assign(land.length, 1);
 
-  // O ponto final: único tile no topo.
-  heights[land[0]?.i ?? endIndex] = MAX_TILE_HEIGHT;
+  if (land.length === 0) heights[endIndex] = MAX_TILE_HEIGHT;
   removeCliffs(terrain);
 }
 
 /**
  * Nenhum degrau intransponível entre dois tiles de terra: levanta o mais baixo até
  * dar pra subir. Mapas "construídos" (telhado colado em ponte, muralha e pátio)
- * não viram armadilha. Só levanta, então o ponto final continua único.
+ * não viram armadilha. Só levanta, nunca passa da altura máxima: o refúgio final
+ * continua sendo só os tiles que já estavam lá.
  */
 function removeCliffs(terrain: Terrain): void {
   const { width, height, heights } = terrain;

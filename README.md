@@ -66,7 +66,7 @@ tiro vai em quem estiver a até 18° da direção apertada.
 Os números ficam em [weapons.ts](packages/shared/src/weapons.ts), compartilhados entre o servidor
 e a predição do cliente.
 
-- A água **só sobe** e **acelera** com o tempo. Cada rodada sorteia um **ponto final**: a enchente começa pelo lado oposto, a terra encolhe em faixas e o último tile seco é **surpresa** (não é marcado): quem ler a água primeiro chega antes.
+- A água **só sobe** e **acelera** com o tempo, no mesmo ritmo de sempre. Mas ela **para** logo abaixo da altura máxima: no fim de tudo sobram **8 blocos conectados** (o _refúgio final_) que **nunca alagam e não podem ser destruídos** (nem pela erosão, nem pela cratera da bazuca). É onde a inundação "fecha" e a briga final acontece, em vez de todo mundo acabar na água. Fica perto do ponto final sorteado e é surpresa: não é marcado. O número (`FINAL_REFUGE_TILES`) e o teto (`TIDE.maxLevel`) ficam em [constants.ts](packages/shared/src/constants.ts) e [tide.ts](packages/shared/src/tide.ts). Se ninguém sair do refúgio, a rodada ainda acaba no limite de 120s.
 - A cada rodada é sorteado um dos **11 mapas** (sem repetir o anterior). Você pode deixar **todos** no sorteio ou escolher **um ou mais**, no menu (vale para solo e criar sala) ou no lobby, inclusive depois do resultado final. A mecânica é a mesma; muda a geografia e o material (terra, madeira, telhado, coral, areia, lama):
   - **Morro**: uma ilha alta no centro.
   - **Arquipélago**: ilha central com ilhotas em volta, que afundam primeiro.
@@ -87,7 +87,7 @@ e a predição do cliente.
 - **Vence a rodada** o último sobrevivente. Se os últimos afundarem no mesmo instante, é **empate**: ninguém leva a estrela.
 - Os **bots** jogam com handicap de propósito (em [Bot.ts](packages/server/src/game/Bot.ts), na constante `BOT`): andam a 78–92% da sua velocidade, demoram pra decidir, precisam de 0,35–0,75s mirando antes de atirar, erram a mira (mais de longe, e o cone da espingarda conta como erro), respiram entre os tiros, **perdem a mira ao levar tiro** e se atrapalham com quem **vem chegando** (de 0,9 a 2,5 tiles): mesmo já de olho em você de longe, entrar nessa faixa faz o bot hesitar de novo. Encostado mesmo (até 0,9 tile) não tem hesitação — ele atira rápido e certeiro, porque titubear com alguém grudado seria burrice, não dificuldade. O tempo até o primeiro tiro fica em ~0,2s encostado, ~0,7s chegando perto e ~0,4s a meia distância (o bot fraco demora o dobro). Sem nada disso eles acertavam 94% dos tiros.
 - Cada rodada vencida vale uma **estrela**. Ao fim de cada rodada aparece um quadro com todos os caranguejos e quantas estrelas cada um tem.
-- A partida tem **1, 3, 5 ou 7 rodadas** (cerca de 40s cada). Você escolhe no menu, e isso vale para jogar sozinho e para criar sala. No lobby, o anfitrião pode trocar, inclusive depois do resultado final, sem sair da sala.
+- A partida tem **1, 3, 5 ou 7 rodadas** (cerca de 50s cada). Você escolhe no menu, e isso vale para jogar sozinho e para criar sala. No lobby, o anfitrião pode trocar, inclusive depois do resultado final, sem sair da sala.
 - **Vence a partida** quem tiver mais estrelas. Se no fim das rodadas houver empate no topo, entra uma **rodada extra de desempate**, e outra, até alguém ficar na frente (com um teto de 10 extras, que na prática nunca chega).
 - No resultado final dá pra ver quem está na sala e quantos bots tem, pra ajustar antes de jogar de novo.
 
