@@ -101,7 +101,9 @@ e a predição do cliente.
 | Build     | Vite (cliente), esbuild (servidor em 1 arquivo) | A imagem final não tem `node_modules`                                                   |
 | Testes    | Vitest                                          | Regras, sala e protocolo testados sem rede                                              |
 
-A arte não usa assets externos. Os sprites são desenhados como texto em [sprites.ts](packages/client/src/game/sprites.ts), os tiles são gerados em [terrainRenderer.ts](packages/client/src/game/terrainRenderer.ts) e os sons são sintetizados com WebAudio em [audio.ts](packages/client/src/game/audio.ts).
+O **cartão do link** (a imagem que aparece quando você cola o endereço no WhatsApp, Discord, Telegram etc.) vem das tags Open Graph do [index.html](packages/client/index.html) e da imagem `packages/client/public/og.jpg` (JPG 1200×628, 145 KB; o WebP não funciona em todos os apps). O endereço nas tags é **absoluto** de propósito: se o domínio mudar, troque `caranguejada.ajvale.com.br` ali. Esses apps guardam o cartão em cache, então, depois de trocar a imagem, compartilhe o link com um `?v=2` no final (ou limpe o cache em [developers.facebook.com/tools/debug](https://developers.facebook.com/tools/debug/)).
+
+A arte do jogo não usa assets externos. Os sprites são desenhados como texto em [sprites.ts](packages/client/src/game/sprites.ts), os tiles são gerados em [terrainRenderer.ts](packages/client/src/game/terrainRenderer.ts) e os sons são sintetizados com WebAudio em [audio.ts](packages/client/src/game/audio.ts).
 
 ## Estrutura
 
