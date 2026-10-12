@@ -9,6 +9,7 @@ import {
   SCORE,
   WEAPONS,
   WEAPON_RULES,
+  rocketRange,
   assistAim,
   createBody,
   createRng,
@@ -40,6 +41,8 @@ export interface CrabInput {
   fy?: number;
   /** A mira vem do mouse: não há "puxão" de mira em direção a alguém. */
   mouse?: boolean;
+  /** Distância até o ponto mirado (tiles): onde a bazuca explode. */
+  ad?: number;
   /** Tempo de simulação que o jogador estava vendo (compensação de lag). */
   vt?: number;
   /** Toques: ficam pendentes até o próximo tick consumir. */
@@ -79,6 +82,8 @@ export interface Rocket {
   dx: number;
   dy: number;
   traveled: number;
+  /** Explode ao chegar nesta distância (o ponto mirado, dentro dos limites). */
+  range: number;
   owner: string;
 }
 
@@ -220,6 +225,7 @@ export class Simulation {
       fx: input.fx,
       fy: input.fy,
       mouse: input.mouse === true,
+      ad: input.ad,
       vt: input.vt,
       seq: input.seq,
       // Toques acumulam até o tick consumir, para não perder um aperto rápido.
@@ -350,9 +356,9 @@ export class Simulation {
     }
   }
 
-  /** Armas no chão ao mesmo tempo: acompanha quantos ainda estão vivos. */
+  /** Armas no chão ao mesmo tempo: uma por caranguejo vivo (mínimo 2), até o teto. */
   private weaponCap(alive: number): number {
-    return Math.min(WEAPON_RULES.maxOnGround, Math.max(2, Math.ceil(alive / 2) + 1));
+    return Math.min(WEAPON_RULES.maxOnGround, Math.max(2, alive));
   }
 
   // ------------------------------------------------------------------ armas
@@ -532,7 +538,7 @@ export class Simulation {
   }
 
   private launchRocket(crab: Crab, result: StepResult): void {
-    const start = CRAB.radius + 0.35;
+    const start = WEAPON_RULES.rocketStart;
     this.rockets.push({
       id: this.nextRocketId++,
       x: crab.x + crab.fx * start,
@@ -540,6 +546,7 @@ export class Simulation {
       dx: crab.fx,
       dy: crab.fy,
       traveled: start,
+      range: rocketRange(crab.input.ad),
       owner: crab.id,
     });
     result.fx.push({
@@ -562,14 +569,16 @@ export class Simulation {
       let boom = false;
       // Dois subpassos por tick: o foguete não "pula" por cima de ninguém.
       for (let sub = 0; sub < 2 && !boom; sub++) {
-        r.x += r.dx * step;
-        r.y += r.dy * step;
-        r.traveled += step;
+        // Nunca passa do ponto mirado: o último pedacinho anda só o que falta.
+        const move = Math.min(step, r.range - r.traveled);
+        r.x += r.dx * move;
+        r.y += r.dy * move;
+        r.traveled += move;
         const outside = r.x < 0 || r.y < 0 || r.x > this.terrain.width || r.y > this.terrain.height;
         const touched = [...this.crabs.values()].some(
           (c) => c.alive && c.id !== r.owner && Math.hypot(c.x - r.x, c.y - r.y) <= hitDist,
         );
-        boom = outside || touched || r.traveled >= WEAPONS.bazuca.reach;
+        boom = outside || touched || r.traveled >= r.range - 1e-6;
       }
       if (!boom) continue;
       this.rockets.splice(i, 1);
@@ -961,6 +970,7 @@ export class Simulation {
       dx: r(k.dx),
       dy: r(k.dy),
       owner: k.owner,
+      rem: r(Math.max(0, k.range - k.traveled)),
     }));
   }
 }

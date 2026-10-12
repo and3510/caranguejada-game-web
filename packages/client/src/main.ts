@@ -28,6 +28,25 @@ const input = new InputController();
 input.onTouchMode = () => {
   if (conn) ui.render(store);
 };
+
+/**
+ * Mouse preso na tela durante a partida (ver InputController.setAiming): só com a partida
+ * rolando (contagem, rodada, resumo entre rodadas) e o menu fechado. No lobby e no
+ * resultado o mouse fica solto pra clicar nos botões.
+ */
+function syncAiming(): boolean {
+  const inMatch =
+    store.phase === 'countdown' || store.phase === 'playing' || store.phase === 'roundEnd';
+  const on = conn !== null && inMatch && !ui.isPauseOpen;
+  input.setAiming(on);
+  return on;
+}
+/** Quando o navegador soltou o mouse no Esc: esse mesmo Esc não pode fechar o menu de novo. */
+let lockLostAt = -Infinity;
+input.onLockLost = () => {
+  lockLostAt = performance.now();
+  openPause();
+};
 const sfx = new Sfx();
 const music = new Music();
 let conn: GameConnection | null = null;
@@ -83,6 +102,7 @@ function connect(mode: JoinMode, code = randomRoomCode()): void {
     })
       .on('room', (m) => {
         store.phase = m.phase;
+        syncAiming();
         store.players = m.players;
         store.round = m.round;
         store.totalRounds = m.totalRounds;
@@ -119,6 +139,7 @@ function connect(mode: JoinMode, code = randomRoomCode()): void {
     c.onClose = ({ error, wasOpen }) => {
       conn = null;
       music.stop();
+      input.setAiming(false);
       input.enabled = false;
       // Código gerado colidiu com uma sala existente: tenta outro.
       if (error?.code === 'room_exists' && mode !== 'entrar' && retries++ < 3) {
@@ -138,6 +159,7 @@ function connect(mode: JoinMode, code = randomRoomCode()): void {
 
 function leave(): void {
   music.stop();
+  input.setAiming(false);
   conn?.close();
   conn = null;
   input.enabled = false;
@@ -201,7 +223,11 @@ ui.lobbyRounds.addEventListener('click', (e) => {
 const fromUrl = new URLSearchParams(location.search).get('sala');
 if (fromUrl) ui.codeInput.value = normalizeRoomCode(fromUrl);
 
-ui.btnSolo.addEventListener('click', () => connect('solo'));
+ui.btnSolo.addEventListener('click', () => {
+  // A partida solo começa já: prende o mouse neste clique (fora de um clique o navegador nega).
+  input.lockPointer();
+  connect('solo');
+});
 ui.btnCreate.addEventListener('click', () => connect('criar'));
 ui.joinForm.addEventListener('submit', (e) => {
   e.preventDefault();
@@ -212,7 +238,10 @@ ui.joinForm.addEventListener('submit', (e) => {
   }
   connect('entrar', code);
 });
-ui.btnStart.addEventListener('click', () => conn?.send({ t: 'start' }));
+ui.btnStart.addEventListener('click', () => {
+  input.lockPointer();
+  conn?.send({ t: 'start' });
+});
 ui.btnAddBot.addEventListener('click', () => conn?.send({ t: 'addBot' }));
 ui.btnRemoveBot.addEventListener('click', () => conn?.send({ t: 'removeBot' }));
 ui.btnLeave.addEventListener('click', leave);
@@ -262,11 +291,14 @@ function openPause(): void {
   input.release();
   input.enabled = false;
   ui.openPause();
+  syncAiming();
 }
 
 function closePause(): void {
   ui.closePause();
   input.enabled = conn !== null;
+  // Voltou pro jogo (clique ou tecla): prende o mouse de novo.
+  if (syncAiming()) input.lockPointer();
 }
 
 ui.btnPause.addEventListener('click', openPause);
@@ -286,6 +318,7 @@ ui.volumeInput.addEventListener('input', () => {
 ui.volumeInput.addEventListener('change', () => sfx.pickup());
 window.addEventListener('keydown', (e) => {
   if (e.code !== 'Escape') return;
+  if (performance.now() - lockLostAt < 400) return;
   if (ui.isPauseOpen) closePause();
   else openPause();
 });

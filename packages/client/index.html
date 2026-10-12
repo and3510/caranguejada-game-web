@@ -208,6 +208,19 @@
   </head>
   <body>
     <div id="game"></div>
+    <!-- Mira do mouse durante a partida (a seta do sistema fica escondida). -->
+    <div id="crosshair" aria-hidden="true">
+      <svg width="23" height="23" viewBox="0 0 23 23" shape-rendering="crispEdges">
+        <path
+          fill="#2b1d14"
+          d="M10 0h3v8h-3zM10 15h3v8h-3zM0 10h8v3H0zM15 10h8v3h-8zM10 10h3v3h-3z"
+        />
+        <path
+          fill="#fff4d6"
+          d="M11 1h1v6h-1zM11 16h1v6h-1zM1 11h6v1H1zM16 11h6v1h-6zM11 11h1v1h-1z"
+        />
+      </svg>
+    </div>
 
     <!-- Tela de abertura: cobre tudo enquanto o jogo carrega por baixo e sai no fim. -->
     <section id="splash" class="splash" aria-label="Carregando o jogo">
@@ -332,7 +345,7 @@
                 rebote te empurra um pouco pra trás.
               </li>
               <li>
-                <b>Submetralhadora</b> (20 balas): cada aperto solta uma rajada de 4 balas fracas; a
+                <b>Submetralhadora</b> (30 balas): cada aperto solta uma rajada de 6 balas fracas; a
                 rajada inteira na mesma pessoa varre ela pra longe.
               </li>
               <li>

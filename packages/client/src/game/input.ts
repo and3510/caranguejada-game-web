@@ -48,16 +48,50 @@ export class InputController {
   touchMode = false;
   /** Avisado quando o modo toque liga (a UI se redesenha). */
   onTouchMode: () => void = () => {};
+  /**
+   * Em partida (fora do menu e da pausa): o mouse fica preso na tela do jogo (Pointer Lock),
+   * a seta do sistema some e a mira passa a ser desenhada pelo jogo. Assim o mouse não sai
+   * da janela no meio da briga, nem clica sem querer em outra coisa.
+   */
+  private aiming = false;
+  /** Fomos nós que soltamos o mouse (pausa, fim da partida): não é pra abrir o menu. */
+  private releasing = false;
+  /** O navegador recusou prender o mouse (às vezes recusa logo depois do Esc): espera um pouco. */
+  private lockFailedAt = -Infinity;
+  /** O navegador soltou o mouse sem a gente pedir (Esc, trocou de janela). */
+  onLockLost: () => void = () => {};
+  private readonly lockTarget = document.getElementById('game');
+  private readonly crosshair = document.getElementById('crosshair');
 
   constructor() {
     window.addEventListener('keydown', (e) => this.onKey(e, true));
     window.addEventListener('keyup', (e) => this.onKey(e, false));
     window.addEventListener('blur', () => this.held.clear());
 
-    // Atualiza a posição do mouse
+    // Posição do mouse. Preso (Pointer Lock), o navegador só manda o deslocamento: a mira
+    // anda por ele e fica dentro da tela.
     window.addEventListener('mousemove', (e) => {
-      this.mouse.x = e.clientX;
-      this.mouse.y = e.clientY;
+      if (document.pointerLockElement) {
+        this.mouse.x = Math.min(window.innerWidth - 1, Math.max(0, this.mouse.x + e.movementX));
+        this.mouse.y = Math.min(window.innerHeight - 1, Math.max(0, this.mouse.y + e.movementY));
+      } else {
+        this.mouse.x = e.clientX;
+        this.mouse.y = e.clientY;
+      }
+      this.moveCrosshair();
+    });
+    document.addEventListener('pointerlockchange', () => {
+      const locked = document.pointerLockElement !== null;
+      document.body.classList.toggle('mouse-locked', locked);
+      if (locked) return;
+      if (this.releasing) {
+        this.releasing = false;
+        return;
+      }
+      if (this.aiming) this.onLockLost();
+    });
+    document.addEventListener('pointerlockerror', () => {
+      this.lockFailedAt = performance.now();
     });
     // Mouse de verdade (não o toque): quem tem os dois volta pra mira do mouse.
     window.addEventListener(
@@ -79,6 +113,19 @@ export class InputController {
       const target = e.target as HTMLElement | null;
       if (target?.tagName === 'INPUT' || target?.tagName === 'BUTTON' || this.touchMode) return;
       if (!this.enabled) return;
+
+      // Em partida com o mouse solto (trocou de janela, o navegador recusou antes): este
+      // clique só prende o mouse de novo. O tiro vem no próximo, sem disparar sem querer.
+      if (
+        e.button === 0 &&
+        this.aiming &&
+        !document.pointerLockElement &&
+        this.canLock() &&
+        performance.now() - this.lockFailedAt > 2000
+      ) {
+        this.lockPointer();
+        return;
+      }
 
       // Botão esquerdo do mouse (0)
       if (e.button === 0) {
@@ -152,11 +199,57 @@ export class InputController {
     return out;
   }
 
+  /** Liga/desliga o modo partida (ver `aiming`). Desligar solta o mouse. */
+  setAiming(on: boolean): void {
+    this.aiming = on;
+    this.syncAimingClass();
+    if (!on) this.unlockPointer();
+  }
+
+  /**
+   * Prende o mouse na tela do jogo. Só funciona dentro de um clique ou tecla do jogador
+   * (regra do navegador), então é chamado nos botões que começam ou voltam pra partida.
+   */
+  lockPointer(): void {
+    if (!this.canLock() || document.pointerLockElement) return;
+    try {
+      const pending = this.lockTarget!.requestPointerLock() as Promise<void> | undefined;
+      pending?.catch?.(() => {
+        this.lockFailedAt = performance.now();
+      });
+    } catch {
+      this.lockFailedAt = performance.now();
+    }
+  }
+
+  private unlockPointer(): void {
+    if (!document.pointerLockElement) return;
+    this.releasing = true;
+    document.exitPointerLock();
+  }
+
+  private canLock(): boolean {
+    return !this.touchMode && !!this.lockTarget && 'requestPointerLock' in this.lockTarget;
+  }
+
+  /** Esconde a seta e mostra a mira do jogo (no toque não há mira de mouse). */
+  private syncAimingClass(): void {
+    document.body.classList.toggle('aiming', this.aiming && !this.touchMode);
+    this.moveCrosshair();
+  }
+
+  private moveCrosshair(): void {
+    if (this.crosshair) {
+      this.crosshair.style.transform = `translate(${this.mouse.x}px, ${this.mouse.y}px)`;
+    }
+  }
+
   private disableTouchMode(): void {
     this.touchMode = false;
     document.body.classList.remove('touch');
     const touchUi = document.getElementById('touch');
     if (touchUi) touchUi.dataset.enabled = 'false';
+    this.syncAimingClass();
     this.onTouchMode();
   }
 
@@ -166,6 +259,8 @@ export class InputController {
     document.body.classList.add('touch');
     const touchUi = document.getElementById('touch');
     if (touchUi) touchUi.dataset.enabled = 'true';
+    this.syncAimingClass();
+    this.unlockPointer();
     this.onTouchMode();
   }
 

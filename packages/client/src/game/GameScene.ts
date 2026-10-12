@@ -8,6 +8,7 @@ import {
   WEAPONS,
   WEAPON_KINDS,
   WEAPON_RULES,
+  rocketRange,
   assistAim,
   createBody,
   createRng,
@@ -109,6 +110,8 @@ interface LocalCrab {
   attackCooldown: number;
   /** Rajada da submetralhadora desenhada na hora (o servidor confirma os acertos). */
   burst: { left: number; timer: number; dx: number; dy: number };
+  /** Distância (tiles) até o cursor: onde a bazuca explode. Sem mouse (toque): undefined. */
+  aimDist?: number;
   seq: number;
   sendTimer: number;
   sentAt: Map<number, number>;
@@ -152,6 +155,8 @@ interface GuessedRocket {
   dy: number;
   start: number;
   smokeAt: number;
+  /** Quanto ainda falta voar até o ponto mirado (tiles). */
+  left: number;
 }
 
 /** Quanto tempo o erro do palpite leva pra sumir (s). */
@@ -400,8 +405,10 @@ export class GameScene extends Phaser.Scene {
         body.fx = aimDx / len;
         body.fy = aimDy / len;
       }
+      local.aimDist = len / TILE;
     } else if (free && !isDashing && input.touchMode) {
-      // Fallback pro telemóvel/touch
+      // Fallback pro telemóvel/touch: sem cursor, a bazuca voa o alcance inteiro.
+      local.aimDist = undefined;
       const len = Math.hypot(dir.dx, dir.dy);
       if (len > 0.01) {
         body.fx = dir.dx / len;
@@ -447,7 +454,7 @@ export class GameScene extends Phaser.Scene {
       } else {
         this.startSwing(store.you, weapon, body.fx, body.fy, this.shotLength(weapon, body, others));
         // O foguete sai do cano na hora: esperar o servidor faria ele "nascer" adiantado.
-        if (spec.style === 'rocket') this.guessRocket(body);
+        if (spec.style === 'rocket') this.guessRocket(body, local.aimDist);
         this.localRecoil(body, body.fx, body.fy, spec.recoil);
       }
     }
@@ -488,6 +495,7 @@ export class GameScene extends Phaser.Scene {
         fx: Math.round(body.fx * 1000) / 1000,
         fy: Math.round(body.fy * 1000) / 1000,
         mouse: !input.touchMode,
+        ...(local.aimDist !== undefined ? { ad: Math.round(local.aimDist * 100) / 100 } : {}),
         // O instante (do servidor) que está na tela: o tiro é decidido ali.
         vt: this.viewTime,
         ...sent,
@@ -1080,10 +1088,12 @@ export class GameScene extends Phaser.Scene {
     return view !== undefined && this.cameras.main.worldView.contains(view.sprite.x, view.sprite.y);
   }
 
-  /** Foguetes em voo: posição do servidor, empurrada pra frente pelo tempo desde o snapshot. */
-  /** Palpite local do foguete: mesma posição, direção e velocidade que o servidor vai usar. */
-  private guessRocket(body: Body): void {
-    const start = CRAB.radius + 0.35;
+  /**
+   * Palpite local do foguete: mesma posição, direção, velocidade e ponto de explosão que o
+   * servidor vai usar. Ele some ao chegar no ponto mirado (a explosão de verdade vem do servidor).
+   */
+  private guessRocket(body: Body, aimDist: number | undefined): void {
+    const start = WEAPON_RULES.rocketStart;
     this.guessedRockets.push({
       img: this.rotatingImage('rocket'),
       x: body.x + body.fx * start,
@@ -1092,6 +1102,7 @@ export class GameScene extends Phaser.Scene {
       dy: body.fy,
       start: performance.now(),
       smokeAt: 0,
+      left: rocketRange(aimDist) - start,
     });
   }
 
@@ -1117,8 +1128,10 @@ export class GameScene extends Phaser.Scene {
       const fade = Math.exp(-dt / ROCKET_BLEND_SECONDS);
       view.offX *= fade;
       view.offY *= fade;
-      const x = (r.x + view.offX + r.dx * WEAPON_RULES.rocketSpeed * since) * TILE;
-      const y = (r.y + view.offY + r.dy * WEAPON_RULES.rocketSpeed * since) * TILE;
+      // Empurra pra frente pelo tempo desde o snapshot, mas nunca além do ponto mirado.
+      const ahead = Math.min(r.rem, WEAPON_RULES.rocketSpeed * since);
+      const x = (r.x + view.offX + r.dx * ahead) * TILE;
+      const y = (r.y + view.offY + r.dy * ahead) * TILE;
       view.img.setPosition(x, y).setRotation(Math.atan2(r.dy, r.dx)).setDepth(9_400);
       if (now >= view.smokeAt) {
         // Rastro de fumaça atrás do foguete.
@@ -1143,8 +1156,16 @@ export class GameScene extends Phaser.Scene {
         this.guessedRockets.splice(i, 1);
         continue;
       }
-      g.x += g.dx * WEAPON_RULES.rocketSpeed * dt;
-      g.y += g.dy * WEAPON_RULES.rocketSpeed * dt;
+      const move = Math.min(g.left, WEAPON_RULES.rocketSpeed * dt);
+      g.x += g.dx * move;
+      g.y += g.dy * move;
+      g.left -= move;
+      if (g.left <= 0) {
+        // Chegou no ponto mirado: o servidor manda a explosão.
+        g.img.destroy();
+        this.guessedRockets.splice(i, 1);
+        continue;
+      }
       const px = g.x * TILE;
       const py = g.y * TILE;
       g.img.setPosition(px, py).setRotation(Math.atan2(g.dy, g.dx)).setDepth(9_400);
@@ -1543,8 +1564,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     // Linha: até o fim do alcance, ou até o primeiro alvo (bala) / contato (foguete).
-    let length: number = spec.reach;
+    // Bazuca: até o ponto mirado (o cursor), dentro dos limites — é onde ela explode.
+    let length: number;
     if (spec.style === 'rocket') {
+      length = rocketRange(me.aimDist);
       const hit = WEAPON_RULES.rocketHitRadius + CRAB.radius;
       for (const c of others) {
         const along = (c.x - body.x) * dx + (c.y - body.y) * dy;

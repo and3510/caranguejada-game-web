@@ -85,6 +85,14 @@ export const BOT = {
   folgaSeca: 6,
   /** Rebote da espingarda/bazuca empurra uns 1,2 tile em terra: é isso que ele confere atrás. */
   reboteAte: 1.3,
+  /**
+   * Briga de perto (até esta distância, tiles): o bot é decidido. Sem o sorteio do gatilho
+   * e com menos respiro entre os tiros — antes dois caranguejos ficavam lado a lado um
+   * tempão sem ninguém atirar. O tempo de mirar (reação) e o susto continuam valendo.
+   */
+  decididoAte: 3,
+  gatilhoDecidido: 0.6,
+  respiroDecidido: 0.4,
 } as const;
 
 interface Goal {
@@ -220,9 +228,15 @@ export class Bot {
       ? base * BOT.coladoMira
       : base + bySkill(BOT.sustoMiraRuim, BOT.sustoMiraBom, this.skill) * susto;
     if (sim.time - this.aimingSince < precisaMirar) return;
-    if (this.rng() > bySkill(BOT.gatilhoRuim, BOT.gatilhoBom, this.skill)) return;
+    const decidido = alvo.d <= BOT.decididoAte;
+    const gatilho = decidido
+      ? BOT.gatilhoDecidido
+      : bySkill(BOT.gatilhoRuim, BOT.gatilhoBom, this.skill);
+    if (this.rng() > gatilho) return;
     // Além da recarga da arma: o bot não emenda um tiro no outro como uma torreta.
-    this.nextShotAt = sim.time + spec.cooldown + bySkill(BOT.pausaRuim, BOT.pausaBom, this.skill);
+    const respiro =
+      bySkill(BOT.pausaRuim, BOT.pausaBom, this.skill) * (decidido ? BOT.respiroDecidido : 1);
+    this.nextShotAt = sim.time + spec.cooldown + respiro;
 
     // Mira torta de propósito: erra mais de longe e quanto pior o bot. Vai em fx/fy
     // (mira própria, separada do andar) e com `mouse` ligado, senão o servidor "puxava"
@@ -236,6 +250,12 @@ export class Bot {
     input.fx = Math.cos(ang);
     input.fy = Math.sin(ang);
     input.mouse = true;
+    // Bazuca: escolhe onde o foguete explode, como o jogador com o mouse — no alvo, errando
+    // a distância um pouco (mais o bot fraco), do mesmo jeito que erra o ângulo.
+    if (spec.style === 'rocket') {
+      const erroDist = bySkill(BOT.erroRuim, BOT.erroBom, this.skill) * 0.6;
+      input.ad = alvo.d * (1 + (this.rng() * 2 - 1) * erroDist);
+    }
     input.attack = true;
   }
 
@@ -388,6 +408,11 @@ export class Bot {
     //    Vem antes da briga: correr atrás de alguém com a água subindo afogava o bot.
     const safe = this.isSafe(sim, here, 0);
     if (!safe) {
+      // Desarmado: se tem arma num lugar que ainda vai estar seco, foge pra lá — resolve
+      // as duas coisas de uma vez (antes ele fugia da água ignorando as armas e passava
+      // a rodada desarmado com arma no chão).
+      const weapon = me.weapon ? null : this.findWeapon(sim, me, true);
+      if (weapon) return weapon;
       const spot = this.findSafeGround(sim, me);
       if (spot) {
         const d = Math.hypot(spot.x - me.x, spot.y - me.y);
@@ -466,19 +491,11 @@ export class Bot {
       if (near) return { x: near.x, y: near.y };
     }
 
-    // 3) Desarmado: vai buscar a arma mais perto que ainda esteja em terra.
+    // 3) Desarmado: vai buscar a arma mais perto que ainda esteja em terra, no mapa todo
+    //    (antes só olhava 11–13 tiles em volta e ficava passeando sem arma). Longe, no dash.
     if (!me.weapon) {
-      let bestWeapon: Goal | null = null;
-      let bestWeaponDist = 8 + this.skill * 6;
-      for (const w of sim.weapons) {
-        const d = Math.hypot(w.x - me.x, w.y - me.y);
-        const floor = heightAt(sim.terrain, Math.floor(w.x), Math.floor(w.y));
-        if (d < bestWeaponDist && floor >= level + 0.3) {
-          bestWeaponDist = d;
-          bestWeapon = { x: w.x, y: w.y };
-        }
-      }
-      if (bestWeapon) return bestWeapon;
+      const weapon = this.findWeapon(sim, me, false);
+      if (weapon) return weapon;
     }
 
     // 4) Nada pra fazer: vai pro lugar seguro (e fica lá, sem ficar sorteando outro).
@@ -506,6 +523,28 @@ export class Bot {
       }
     }
     return best;
+  }
+
+  /**
+   * A arma no chão mais perto, no mapa todo. `onlySafe`: só as que estão num lugar que ainda
+   * vai estar seco quando ele chegar (pra fugir da água e se armar de uma vez).
+   */
+  private findWeapon(sim: Simulation, me: Crab, onlySafe: boolean): Goal | null {
+    const speed = CRAB.speed * bySkill(BOT.paceRuim, BOT.paceBom, this.skill);
+    let best: Goal | null = null;
+    let bestDist = Infinity;
+    for (const w of sim.weapons) {
+      const d = Math.hypot(w.x - me.x, w.y - me.y);
+      const floor = heightAt(sim.terrain, Math.floor(w.x), Math.floor(w.y));
+      if (floor < sim.level + 0.3) continue;
+      if (onlySafe && !this.isSafe(sim, floor, d / speed)) continue;
+      if (d < bestDist) {
+        bestDist = d;
+        best = { x: w.x, y: w.y };
+      }
+    }
+    if (!best) return null;
+    return { ...best, dash: me.dashCooldown <= 0 && bestDist > 5 && this.rng() < 0.5 };
   }
 
   /** O chão de altura `h` ainda vai estar seco daqui a `travel` segundos + a folga? */

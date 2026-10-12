@@ -9,6 +9,7 @@ import {
   MAX_TILE_HEIGHT,
   TIDE,
   WEAPONS,
+  WEAPON_RULES,
   WEAPON_KINDS,
   createBody,
   knockbackMultiplier,
@@ -22,6 +23,7 @@ import {
   landRatio,
   lastLand,
   parseClientMessage,
+  rocketRange,
   pickWeaponKind,
   randomRoomCode,
   sanitizeName,
@@ -364,5 +366,28 @@ describe('room codes', () => {
     for (const bad of ['abcd', 'AEIO', 'BCD', 'BCDFG', '', null, 1234]) {
       expect(isValidRoomCode(bad)).toBe(false);
     }
+  });
+});
+
+describe('bazuca: alcance mirado', () => {
+  it('vai até o ponto mirado, dentro dos limites', () => {
+    expect(rocketRange(5)).toBe(5);
+    expect(rocketRange(undefined)).toBe(WEAPONS.bazuca.reach); // toque/teclado: alcance todo
+    expect(rocketRange(99)).toBe(WEAPONS.bazuca.reach);
+    expect(rocketRange(0)).toBe(WEAPON_RULES.rocketMinRange);
+    expect(rocketRange(Number.NaN)).toBe(WEAPONS.bazuca.reach);
+  });
+
+  it('o protocolo aceita a distância da mira e barra lixo', () => {
+    const base = { t: 'input', seq: 1, dx: 0, dy: 0, fx: 1, fy: 0, mouse: true };
+    const ok = parseClientMessage(JSON.stringify({ ...base, ad: 4.5 }));
+    expect(ok && ok.t === 'input' && ok.ad).toBe(4.5);
+    const negativo = parseClientMessage(JSON.stringify({ ...base, ad: -3 }));
+    expect(negativo && negativo.t === 'input' && negativo.ad).toBeUndefined();
+    const enorme = parseClientMessage(JSON.stringify({ ...base, ad: 1e9 }));
+    expect(enorme && enorme.t === 'input' && enorme.ad).toBe(100);
+    // Sem mira (fx/fy), a distância não vale nada.
+    const semMira = parseClientMessage(JSON.stringify({ t: 'input', seq: 1, dx: 0, dy: 0, ad: 4 }));
+    expect(semMira && semMira.t === 'input' && semMira.ad).toBeUndefined();
   });
 });

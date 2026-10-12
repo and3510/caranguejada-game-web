@@ -58,6 +58,8 @@ export interface RocketSnapshot {
   dy: number;
   /** Quem atirou: o cliente usa pra casar o foguete com o palpite que já desenhou. */
   owner: string;
+  /** Quanto falta pra ele explodir (tiles): o cliente não desenha o foguete passando do ponto. */
+  rem: number;
 }
 
 export interface WeaponItemSnapshot {
@@ -166,6 +168,11 @@ export interface InputMessage {
   /** A mira vem do mouse (precisa): o servidor não "puxa" o tiro pra perto de alguém. */
   mouse?: boolean;
   /**
+   * Distância (tiles) do caranguejo até o ponto mirado. A bazuca explode ali (dentro dos
+   * limites, ver `rocketRange`); ausente = alcance inteiro.
+   */
+  ad?: number;
+  /**
    * Tempo de simulação (s) que o jogador estava vendo quando mandou o input: os outros
    * são desenhados ~110ms no passado. O servidor volta os alvos a esse instante pra
    * decidir o tiro (compensação de lag), em vez de testar contra onde eles estão agora.
@@ -244,6 +251,8 @@ export function parseClientMessage(raw: string): ClientMessage | null {
         out.fx = clampUnit(msg.fx);
         out.fy = clampUnit(msg.fy);
         if (msg.mouse === true) out.mouse = true;
+        // Distância da mira: o servidor ainda limita ao alcance; aqui só barra lixo.
+        if (isFiniteNumber(msg.ad) && msg.ad >= 0) out.ad = Math.min(100, msg.ad);
       }
       if (isFiniteNumber(msg.vt) && msg.vt >= 0) out.vt = msg.vt;
       return out;

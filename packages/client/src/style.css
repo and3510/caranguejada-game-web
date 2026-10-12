@@ -1493,3 +1493,30 @@ body.low-fx .summary-board,
 body.low-fx .star.new {
   animation: none;
 }
+
+/* ---------------------------------------------------------------- mira do mouse */
+
+/*
+ * Em partida a seta do sistema some (o mouse fica preso na tela, ver input.ts) e a mira é
+ * esta, que anda com o mouse. Fora da partida, no menu e no toque, volta tudo ao normal.
+ */
+#crosshair {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 20;
+  display: none;
+  margin: -11px 0 0 -11px; /* centro da mira no ponto do mouse */
+  pointer-events: none;
+  will-change: transform;
+}
+#crosshair svg {
+  display: block;
+}
+body.aiming #crosshair {
+  display: block;
+}
+body.aiming #game,
+body.aiming #hud {
+  cursor: none;
+}

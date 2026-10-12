@@ -101,16 +101,17 @@ export const WEAPONS: Record<WeaponKind, WeaponSpec> = {
   // vai varrendo ela como um jato de mangueira. Cada bala tem um rebote leve.
   submetralhadora: {
     name: 'Submetralhadora',
-    hint: 'rajada de 4 balas fracas: a rajada inteira empurra o alvo',
+    hint: 'rajada de 6 balas fracas: a rajada inteira empurra o alvo',
     style: 'burst',
     unit: ['bala', 'balas'],
-    reach: 5,
+    reach: 6.5,
     arc: 0,
     cooldown: 1.3,
     impulse: 3.5,
     damage: 3,
     stun: 0.12,
-    uses: 20,
+    // 5 rajadas de 6 balas.
+    uses: 30,
     recoil: 1.2,
     speedMul: 1,
     swimMul: 1,
@@ -158,10 +159,14 @@ export function knockbackMultiplier(damage: number): number {
 export const WEAPON_RULES = {
   /** Distância para pegar uma arma do chão com E. */
   pickupRadius: 0.9,
-  /** Armas no chão ao mesmo tempo (no máximo). */
-  maxOnGround: 4,
+  /**
+   * Armas no chão ao mesmo tempo (no máximo): uma por caranguejo vivo, até este teto.
+   * Com menos (era até 4, uma pra cada dois), quase metade da rodada a pessoa passava
+   * desarmada, e caranguejos se encontravam sem ter com o que atirar.
+   */
+  maxOnGround: 6,
   /** Intervalo entre uma arma nova e outra (s); na enchente, mais rápido. */
-  spawnEverySeconds: 5,
+  spawnEverySeconds: 4,
   floodSpawnEverySeconds: 3,
   /** De preferência, nasce em terra que vai demorar a alagar. */
   spawnMinHeightAboveWater: 1.5,
@@ -182,7 +187,7 @@ export const WEAPON_RULES = {
    */
   aimAssist: deg(18),
   /** Submetralhadora: balas por rajada, intervalo entre elas (s) e espalhamento (radianos). */
-  burstShots: 4,
+  burstShots: 6,
   burstInterval: 0.055,
   burstJitter: deg(7),
   /** Bazuca: velocidade do foguete (tiles/s). */
@@ -192,12 +197,31 @@ export const WEAPON_RULES = {
   /** Bazuca: raio da explosão (empurra quem estiver dentro). */
   blastRadius: 1.9,
   /**
+   * Bazuca: o foguete explode onde o jogador mirou (o cursor), entre este mínimo e o
+   * alcance da arma. O mínimo é o raio da explosão e um pouco: mirar colado no próprio pé
+   * (ou jogar só no teclado, com o mouse parado em cima do caranguejo) não explode na cara.
+   */
+  rocketMinRange: 2,
+  /** Bazuca: o foguete sai desta distância do centro de quem atira (tiles). */
+  rocketStart: 0.67,
+  /**
    * Bazuca: a explosão destrói o bloco atingido e os 8 em volta (3×3).
    * Quanto cada um afunda: o do centro mais, os vizinhos um pouco menos.
    */
   craterCenterDepth: 3,
   craterRingDepth: 2,
 } as const;
+
+/**
+ * Até onde o foguete voa (tiles, do centro de quem atira): até o ponto mirado, dentro dos
+ * limites. Sem ponto mirado (toque, teclado puro), voa o alcance inteiro, como antes.
+ * Encostar em alguém no caminho continua explodindo antes.
+ */
+export function rocketRange(aimDistance: number | undefined): number {
+  const reach = WEAPONS.bazuca.reach;
+  if (aimDistance === undefined || !Number.isFinite(aimDistance)) return reach;
+  return Math.min(reach, Math.max(WEAPON_RULES.rocketMinRange, aimDistance));
+}
 
 export function isWeaponKind(value: unknown): value is WeaponKind {
   return typeof value === 'string' && (WEAPON_KINDS as readonly string[]).includes(value);

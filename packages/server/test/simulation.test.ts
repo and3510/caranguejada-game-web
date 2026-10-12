@@ -465,6 +465,63 @@ describe('Simulation', () => {
     expect(boom.x).toBeCloseTo(2.5 + WEAPONS.bazuca.reach, 0);
   });
 
+  describe('bazuca: mira livre (explode onde o jogador mirou)', () => {
+    /** Atira de (2.5, 10.5) pra direita mirando a `ad` tiles; devolve onde explodiu. */
+    const boomAt = (ad: number | undefined, other = { x: 10, y: 2 }) => {
+      const sim = arena(2);
+      sim.giveWeapon('a', 'bazuca');
+      place(sim, 'a', 2.5, 10.5);
+      place(sim, 'b', other.x, other.y);
+      sim.setInput('a', { dx: 0, dy: 0, fx: 1, fy: 0, mouse: true, ad, seq: 1, attack: true });
+      const { fx } = run(sim, 1.5);
+      return fx.find((e) => e.kind === 'boom')!;
+    };
+
+    it('explode no ponto mirado, não no fim do alcance', () => {
+      expect(boomAt(4).x).toBeCloseTo(2.5 + 4, 1);
+      expect(boomAt(6.3).x).toBeCloseTo(2.5 + 6.3, 1);
+    });
+
+    it('respeita o limite: além do alcance, explode no alcance', () => {
+      expect(boomAt(50).x).toBeCloseTo(2.5 + WEAPONS.bazuca.reach, 1);
+    });
+
+    it('mirar no próprio pé não explode na cara: vai até o mínimo', () => {
+      const boom = boomAt(0.3);
+      expect(boom.x).toBeCloseTo(2.5 + WEAPON_RULES.rocketMinRange, 1);
+      // Fora do raio da explosão: quem atirou não leva o tranco.
+      expect(WEAPON_RULES.rocketMinRange).toBeGreaterThan(WEAPON_RULES.blastRadius);
+    });
+
+    it('quem estiver no caminho antes do ponto mirado ainda leva o foguete', () => {
+      const boom = boomAt(8, { x: 5.5, y: 10.5 });
+      expect(boom.x).toBeLessThan(5.5);
+    });
+
+    it('a cratera abre onde o jogador mirou', () => {
+      const sim = arena(2);
+      sim.giveWeapon('a', 'bazuca');
+      place(sim, 'a', 5.5, 10.5);
+      place(sim, 'b', 10, 2);
+      sim.setInput('a', { dx: 0, dy: 0, fx: 1, fy: 0, mouse: true, ad: 4, seq: 1, attack: true });
+      run(sim, 1.5);
+      const height = (tx: number, ty: number) => sim.terrain.heights[ty * sim.terrain.width + tx];
+      expect(height(9, 10)).toBe(8 - WEAPON_RULES.craterCenterDepth); // 5,5 + 4 = 9,5
+      expect(height(12, 10)).toBe(8); // o resto do caminho continua inteiro
+    });
+
+    it('o snapshot conta quanto falta (o cliente não desenha o foguete passando do ponto)', () => {
+      const sim = arena(2);
+      sim.giveWeapon('a', 'bazuca');
+      place(sim, 'a', 2.5, 10.5);
+      place(sim, 'b', 10, 2);
+      sim.setInput('a', { dx: 0, dy: 0, fx: 1, fy: 0, mouse: true, ad: 5, seq: 1, attack: true });
+      sim.step(DT);
+      const [r] = sim.rocketSnapshots();
+      expect(r!.x + r!.rem).toBeCloseTo(2.5 + 5, 1);
+    });
+  });
+
   it('R pega a arma do chão, larga, e troca uma pela outra (com o desgaste)', () => {
     const sim = arena(5);
     const a = place(sim, 'a', 10.5, 10.5);
