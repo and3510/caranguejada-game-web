@@ -13,6 +13,7 @@ import {
   type MapKind,
 } from '@caranguejada/shared';
 import { Sfx } from './game/audio';
+import { Music } from './game/music';
 import { GameScene } from './game/GameScene';
 import { InputController } from './game/input';
 import { Connection, type GameConnection } from './net/Connection';
@@ -28,6 +29,7 @@ input.onTouchMode = () => {
   if (conn) ui.render(store);
 };
 const sfx = new Sfx();
+const music = new Music();
 let conn: GameConnection | null = null;
 
 // localStorage pode falhar (aba anônima, bloqueio de cookies): nunca é crítico.
@@ -52,6 +54,9 @@ const storage = {
 
 function connect(mode: JoinMode, code = randomRoomCode()): void {
   sfx.unlock();
+  // Ainda dentro do clique: o navegador (o iPhone, principalmente) só libera o áudio aqui.
+  const out = sfx.output();
+  if (out) music.prime(out.ctx, out.master);
   const name = sanitizeName(ui.nameInput.value);
   ui.nameInput.value = name;
   storage.set('caranguejada:name', name);
@@ -88,6 +93,10 @@ function connect(mode: JoinMode, code = randomRoomCode()): void {
       })
       .on('round', (m) => {
         store.startRound(m.round, m.seed, m.map, m.heights, m.countdown);
+        // Cada rodada tem a sua música, sem repetir na partida. Rodada 1 = partida nova:
+        // sorteia a ordem de novo. Quem entra com a partida rolando já começa a ouvir.
+        if (m.round === 1) music.startMatch();
+        else music.nextRound();
       })
       .on('snap', (m) => {
         store.pushSnapshot(m.time, m.crabs, m.weapons, m.rockets);
@@ -109,6 +118,7 @@ function connect(mode: JoinMode, code = randomRoomCode()): void {
 
     c.onClose = ({ error, wasOpen }) => {
       conn = null;
+      music.stop();
       input.enabled = false;
       // Código gerado colidiu com uma sala existente: tenta outro.
       if (error?.code === 'room_exists' && mode !== 'entrar' && retries++ < 3) {
@@ -127,6 +137,7 @@ function connect(mode: JoinMode, code = randomRoomCode()): void {
 }
 
 function leave(): void {
+  music.stop();
   conn?.close();
   conn = null;
   input.enabled = false;

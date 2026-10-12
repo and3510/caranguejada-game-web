@@ -2,7 +2,8 @@ import type { WeaponKind } from '@caranguejada/shared';
 
 /**
  * Efeitos sonoros sintetizados na hora (WebAudio): zero arquivos de áudio,
- * timbre próprio e carregamento instantâneo.
+ * timbre próprio e carregamento instantâneo. (A música é um arquivo: ver music.ts,
+ * que toca pela mesma saída daqui, debaixo do mesmo volume.)
  */
 export class Sfx {
   private ctx: AudioContext | null = null;
@@ -25,6 +26,11 @@ export class Sfx {
     this.noise = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const data = this.noise.getChannelData(0);
     for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+  }
+
+  /** Saída de áudio já destravada (depois de `unlock`), pra música tocar pelo mesmo volume. */
+  output(): { ctx: AudioContext; master: GainNode } | null {
+    return this.ctx && this.master ? { ctx: this.ctx, master: this.master } : null;
   }
 
   /** Curva quadrática: o controle soa mais natural ao ouvido do que linear. */

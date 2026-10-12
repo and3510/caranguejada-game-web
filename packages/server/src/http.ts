@@ -13,6 +13,7 @@ const MIME: Record<string, string> = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
+  '.mp3': 'audio/mpeg',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
   '.map': 'application/json; charset=utf-8',
@@ -36,6 +37,35 @@ export const SECURITY_HEADERS: Record<string, string> = {
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
   'Cross-Origin-Opener-Policy': 'same-origin',
 };
+
+/**
+ * Um único intervalo de bytes ("bytes=início-fim", "bytes=início-" ou "bytes=-últimos").
+ * Áudio e vídeo pedem o arquivo em pedaços pra começar a tocar antes de baixar tudo, e o
+ * Safari nem toca mídia de servidor que não responde a isso. Cabeçalho que não entendemos
+ * (vários intervalos, lixo) devolve null: aí manda o arquivo inteiro, o que a RFC permite.
+ */
+export function parseRange(
+  header: string | undefined,
+  size: number,
+): { start: number; end: number } | 'unsatisfiable' | null {
+  if (!header) return null;
+  const m = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!m || (m[1] === '' && m[2] === '')) return null;
+  let start: number;
+  let end: number;
+  if (m[1] === '') {
+    // "bytes=-500": os últimos 500 bytes.
+    const last = Number(m[2]);
+    if (last === 0) return 'unsatisfiable';
+    start = Math.max(0, size - last);
+    end = size - 1;
+  } else {
+    start = Number(m[1]);
+    end = m[2] === '' ? size - 1 : Math.min(Number(m[2]), size - 1);
+  }
+  if (start >= size || start > end) return 'unsatisfiable';
+  return { start, end };
+}
 
 /**
  * Serve o build do cliente (SPA). Arquivos com hash em /assets recebem cache longo;
@@ -85,12 +115,33 @@ export function createStaticHandler(rootDir: string) {
 
     const ext = path.extname(filePath);
     const immutable = pathname.startsWith('/assets/');
-    res.writeHead(200, {
+    const headers = {
       ...SECURITY_HEADERS,
       'Content-Type': MIME[ext] ?? 'application/octet-stream',
-      'Content-Length': info.size,
       'Cache-Control': immutable ? 'public, max-age=31536000, immutable' : 'no-cache',
-    });
+      'Accept-Ranges': 'bytes',
+    };
+
+    const range = parseRange(req.headers.range, info.size);
+    if (range === 'unsatisfiable') {
+      res.writeHead(416, { ...headers, 'Content-Range': `bytes */${info.size}` }).end();
+      return;
+    }
+    if (range) {
+      res.writeHead(206, {
+        ...headers,
+        'Content-Range': `bytes ${range.start}-${range.end}/${info.size}`,
+        'Content-Length': range.end - range.start + 1,
+      });
+      if (req.method === 'HEAD') {
+        res.end();
+        return;
+      }
+      createReadStream(filePath, range).pipe(res);
+      return;
+    }
+
+    res.writeHead(200, { ...headers, 'Content-Length': info.size });
     if (req.method === 'HEAD') {
       res.end();
       return;
